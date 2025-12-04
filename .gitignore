@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.vite/
+.env
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv
+env/
+venv/
+*.db
+*.log
+mock_drive_db.json
