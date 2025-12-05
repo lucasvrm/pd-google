@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
 
+
 class DriveFolder(Base):
     __tablename__ = "google_drive_folders"
 
@@ -11,6 +12,7 @@ class DriveFolder(Base):
     entity_type = Column(String, index=True) # client, lead, deal, pf, pj
     folder_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class DriveFile(Base):
     __tablename__ = "drive_files"

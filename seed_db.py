@@ -1,36 +1,44 @@
-from sqlalchemy.orm import Session
-from database import SessionLocal, engine
-import models
+"""
+Cria templates de estrutura padrão para:
+- lead
+- company
+- contact
+- deal
+"""
 
-def seed_db():
-    models.Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+from database import SessionLocal
+from models import DriveStructureTemplate, DriveStructureNode
 
-    # 1. Check if templates exist
-    existing = db.query(models.DriveStructureTemplate).filter_by(entity_type="client").first()
-    if not existing:
-        print("Seeding Client Template...")
-        template = models.DriveStructureTemplate(name="Standard Client", entity_type="client")
-        db.add(template)
-        db.commit()
-        db.refresh(template)
+db = SessionLocal()
 
-        # Nodes:
-        # Client Root
-        #   |-- Contracts
-        #   |-- Proposals
-        #   |-- Briefings
 
-        n1 = models.DriveStructureNode(template_id=template.id, name="Contracts", order=1)
-        n2 = models.DriveStructureNode(template_id=template.id, name="Proposals", order=2)
-        n3 = models.DriveStructureNode(template_id=template.id, name="Briefings", order=3)
+def create_template(entity_type: str, folders: list[str]):
+    template = DriveStructureTemplate(
+        name=f"Default {entity_type.capitalize()} Template",
+        entity_type=entity_type,
+        active=True,
+    )
+    db.add(template)
+    db.commit()
 
-        db.add_all([n1, n2, n3])
-        db.commit()
-    else:
-        print("Client Template already exists.")
+    for i, folder in enumerate(folders):
+        node = DriveStructureNode(
+            template_id=template.id,
+            name=folder,
+            order=i,
+            parent_id=None,
+        )
+        db.add(node)
 
-    db.close()
+    db.commit()
 
-if __name__ == "__main__":
-    seed_db()
+
+# Executar apenas uma vez
+print("Seeding templates...")
+
+create_template("lead", ["Documentos", "Contratos", "Propostas"])
+create_template("company", ["Contratos", "Financeiro", "Documentos"])
+create_template("contact", ["Documentos"])
+create_template("deal", ["Propostas", "Contratos", "Notas"])
+
+print("Done.")
