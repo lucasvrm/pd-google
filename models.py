@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -9,7 +9,7 @@ class DriveFolder(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(String, index=True)
-    entity_type = Column(String, index=True) # client, lead, deal, pf, pj
+    entity_type = Column(String, index=True) # company, lead, deal, contact
     folder_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -31,7 +31,7 @@ class DriveStructureTemplate(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True)
-    entity_type = Column(String, index=True) # client, deal, etc.
+    entity_type = Column(String, index=True) # company, lead, deal, etc.
     active = Column(Boolean, default=True)
 
     nodes = relationship("DriveStructureNode", back_populates="template")
@@ -46,9 +46,7 @@ class DriveStructureNode(Base):
     order = Column(Integer, default=0)
 
     template = relationship("DriveStructureTemplate", back_populates="nodes")
-    # children = relationship("DriveStructureNode", backref=relationship("DriveStructureNode", remote_side=[id]))
     # Simplification: For now just one level deep for MVP, or fix self-referential
-    # Correct self-referential syntax in modern SQLAlchemy often uses strings or lambdas.
     # We will omit 'children' explicit prop for now to fix the seeding error quickly.
 
 # Roles & Permissions (Simplified for MVP)
@@ -58,3 +56,35 @@ class UserRole(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, index=True) # ID from Supabase Auth
     role = Column(String) # admin, manager, sales
+
+# --- SUPABASE INTEGRATION MODELS ---
+# These models map to existing tables in the main application database (Supabase)
+# We define them here to allow SQLAlchemy to query them for names and relationships.
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(String, primary_key=True) # UUID
+    name = Column(String) # Razão Social or Name
+    fantasy_name = Column(String, nullable=True) # Nome Fantasia
+    # Add other fields if necessary, but we only need names for folder naming
+
+class Lead(Base):
+    __tablename__ = "leads"
+
+    id = Column(String, primary_key=True) # UUID
+    title = Column(String) # Lead name/title
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+
+    # Relationship (optional, but helpful)
+    company = relationship("Company")
+
+class Deal(Base):
+    __tablename__ = "deals"
+
+    id = Column(String, primary_key=True) # UUID
+    title = Column(String) # Deal name/title
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+
+    # Relationship
+    company = relationship("Company")

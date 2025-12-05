@@ -17,7 +17,11 @@ class GoogleDriveService:
     def _load_db(self):
         if os.path.exists(DB_FILE):
             with open(DB_FILE, "r") as f:
-                self.db = json.load(f)
+                try:
+                    self.db = json.load(f)
+                except json.JSONDecodeError:
+                    # Fallback if corrupted
+                    self.db = {"files": {}, "folders": {"root": {"id": "root", "name": "My Drive", "parents": []}}}
         else:
             self.db = {
                 "files": {},
@@ -32,6 +36,7 @@ class GoogleDriveService:
             json.dump(self.db, f, indent=2)
 
     def create_folder(self, name: str, parent_id: str = "root") -> Dict[str, Any]:
+        self._load_db() # Reload to get latest state before writing
         folder_id = str(uuid.uuid4())
         folder = {
             "id": folder_id,
@@ -45,10 +50,8 @@ class GoogleDriveService:
         return folder
 
     def upload_file(self, file_content: bytes, name: str, mime_type: str, parent_id: str = "root") -> Dict[str, Any]:
+        self._load_db()
         file_id = str(uuid.uuid4())
-        # In a real mock, we might save the content to disk. Here we just store metadata.
-        # We'll save content to a 'uploads' folder for simulation realism if needed,
-        # but the prompt focuses on metadata/structure mainly.
 
         file_meta = {
             "id": file_id,
@@ -64,7 +67,7 @@ class GoogleDriveService:
         return file_meta
 
     def list_files(self, folder_id: str = "root") -> List[Dict[str, Any]]:
-        # Return all folders and files whose parent is folder_id
+        self._load_db() # Reload to ensure we see files created by other instances
         items = []
         for f in self.db["folders"].values():
             if folder_id in f.get("parents", []):
@@ -75,6 +78,7 @@ class GoogleDriveService:
         return items
 
     def get_file(self, file_id: str) -> Optional[Dict[str, Any]]:
+        self._load_db()
         if file_id in self.db["folders"]:
             return self.db["folders"][file_id]
         if file_id in self.db["files"]:

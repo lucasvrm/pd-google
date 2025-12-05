@@ -5,6 +5,7 @@ from services.google_drive_mock import GoogleDriveService
 from services.google_drive_real import GoogleDriveRealService
 from services.template_service import TemplateService
 from services.permission_service import PermissionService
+from services.hierarchy_service import HierarchyService
 import models
 from typing import List, Dict, Any
 from pydantic import BaseModel
@@ -47,40 +48,27 @@ def get_entity_drive(
     user_role: str | None = Header(default=None, alias="x-user-role"),
 ):
     try:
-        # 1. Check if we have a root folder mapping for this entity
-        entity_folder = (
-            db.query(models.DriveFolder)
-            .filter(
-                models.DriveFolder.entity_type == entity_type,
-                models.DriveFolder.entity_id == entity_id,
-            )
-            .first()
-        )
+        # 0. Validate Entity Type
+        allowed_types = ["company", "lead", "deal"]
+        # 'contact' commented out for now as per instructions
+        if entity_type not in allowed_types:
+            raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+        # 1. Check/Ensure Folder Structure (Hierarchical)
+        hierarchy_service = HierarchyService(db)
+        entity_folder = None
+
+        if entity_type == "company":
+            entity_folder = hierarchy_service.ensure_company_structure(entity_id)
+        elif entity_type == "lead":
+            entity_folder = hierarchy_service.ensure_lead_structure(entity_id)
+        elif entity_type == "deal":
+            entity_folder = hierarchy_service.ensure_deal_structure(entity_id)
 
         if not entity_folder:
-            # If not, create a root folder for this entity in the Drive
-            # For simplicity, we create it under 'root'
-            folder_name = f"{entity_type}_{entity_id}"
-            drive_folder = drive_service.create_folder(folder_name)
+            raise HTTPException(status_code=500, detail="Failed to resolve/create folder structure")
 
-            # Save mapping
-            new_mapping = models.DriveFolder(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                folder_id=drive_folder["id"],
-            )
-            db.add(new_mapping)
-            db.commit()
-            db.refresh(new_mapping)
-
-            # Apply Template Logic
-            print(f"Applying template for {entity_type}...")
-            template_service = TemplateService(db, drive_service)
-            template_service.apply_template(entity_type, drive_folder["id"])
-
-            root_id = new_mapping.folder_id
-        else:
-            root_id = entity_folder.folder_id
+        root_id = entity_folder.folder_id
 
         # 2. List contents of this folder
         items = drive_service.list_files(root_id)
@@ -100,9 +88,14 @@ def get_entity_drive(
             )
 
         return {"files": items, "permission": permission}
+    except HTTPException:
+        # Re-raise HTTPExceptions without change
+        raise
+    except ValueError as ve:
+        # Catch errors from HierarchyService (e.g. Lead not found in DB)
+        raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
         import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -115,6 +108,10 @@ def create_subfolder(
     db: Session = Depends(get_db),
     user_role: str | None = Header(default=None, alias="x-user-role"),
 ):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
     # 1. Check permission
     perm_service = PermissionService(db)
     if user_role:
@@ -131,6 +128,10 @@ def create_subfolder(
         )
 
     # 2. Get root folder
+    # We use HierarchyService to ensure it exists if called (idempotent)
+    hierarchy_service = HierarchyService(db)
+    # We could call ensure_..._structure here again, but usually GET is called first.
+    # To be safe, let's query the DB mapping directly.
     entity_folder = (
         db.query(models.DriveFolder)
         .filter(
@@ -143,7 +144,7 @@ def create_subfolder(
     if not entity_folder:
         raise HTTPException(
             status_code=404,
-            detail="Entity root folder not found. Call list first.",
+            detail="Entity root folder not found. Call list (GET) first to initialize structure.",
         )
 
     # 3. Create folder in Drive
@@ -161,6 +162,10 @@ async def upload_file(
     db: Session = Depends(get_db),
     user_role: str | None = Header(default=None, alias="x-user-role"),
 ):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
     # 1. Check permission
     perm_service = PermissionService(db)
     if user_role:
@@ -188,7 +193,7 @@ async def upload_file(
     if not entity_folder:
         raise HTTPException(
             status_code=404,
-            detail="Entity root folder not found. Call list first.",
+            detail="Entity root folder not found. Call list (GET) first to initialize structure.",
         )
 
     # 3. Read file content
