@@ -12,8 +12,10 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 from services.google_calendar_service import GoogleCalendarService
+import logging
 
 router = APIRouter()
+logger = logging.getLogger("pipedesk_drive.webhooks")
 
 
 def get_db():
@@ -47,7 +49,7 @@ async def receive_google_webhook(
     For clarity, I'll check if this is a Drive or Calendar webhook based on DB lookup.
     """
     
-    print(f"Received webhook: channel={x_goog_channel_id} resource={x_goog_resource_id} state={x_goog_resource_state}")
+    logger.info(f"Received webhook: channel={x_goog_channel_id} resource={x_goog_resource_id} state={x_goog_resource_state}")
 
     if not x_goog_channel_id or not x_goog_resource_id:
         raise HTTPException(status_code=400, detail="Missing required headers")
@@ -68,7 +70,7 @@ async def receive_google_webhook(
     if calendar_channel:
         return await handle_calendar_webhook(db, calendar_channel, x_goog_resource_state, x_goog_channel_token)
 
-    print(f"Unknown channel: {x_goog_channel_id}")
+    logger.warning(f"Unknown channel: {x_goog_channel_id}")
     # Return 200 to stop retries
     return {"status": "ignored", "reason": "unknown_channel"}
 
@@ -80,10 +82,10 @@ async def handle_drive_webhook(db, channel, state, token, uri, changed):
     
     if config.WEBHOOK_SECRET and token != config.WEBHOOK_SECRET:
          # Log warning but maybe don't error to avoid retries if it's a config mismatch
-         print("Warning: Invalid token for Drive webhook")
+         logger.warning("Invalid token for Drive webhook")
     
     if state == "sync":
-        print(f"Drive Sync Handshake: {channel.channel_id}")
+        logger.info(f"Drive Sync Handshake: {channel.channel_id}")
         return {"status": "ok"}
 
     # Extract changed resource ID from URI if available
@@ -115,13 +117,13 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
     """
     Process Calendar Webhook
     """
-    print(f"Processing Calendar Webhook for {channel.channel_id}")
+    logger.info(f"Processing Calendar Webhook for {channel.channel_id}")
 
     if not channel.active:
          return {"status": "ignored", "reason": "inactive_channel"}
 
     if state == "sync":
-        print("Calendar Sync Handshake")
+        logger.info("Calendar Sync Handshake")
         return {"status": "ok"}
 
     # Trigger Sync Logic
@@ -130,7 +132,7 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
         service = GoogleCalendarService()
         sync_calendar_events(db, service, channel)
     except Exception as e:
-        print(f"Error syncing calendar: {e}")
+        logger.error(f"Error syncing calendar: {e}", exc_info=True)
         # Return 200 to avoid Google retrying indefinitely if it's a logic error
         return {"status": "error", "detail": str(e)}
 
@@ -141,7 +143,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
     """
     Core Two-Way Sync Logic using Sync Token.
     """
-    print(f"Syncing calendar {channel.calendar_id} with token {channel.sync_token}")
+    logger.info(f"Syncing calendar {channel.calendar_id} with token {channel.sync_token}")
 
     page_token = None
     new_sync_token = None
@@ -158,12 +160,23 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 singleEvents=True # Important for expanding recurrences
             ).execute()
         except Exception as e:
-            if '410' in str(e) or 'sync token is no longer valid' in str(e).lower():
-                print("Sync token invalid. Performing full sync.")
+            error_msg = str(e)
+            if '410' in error_msg or 'sync token is no longer valid' in error_msg.lower():
+                logger.warning("Sync token invalid (410). Performing full sync.")
+                # Clear token to force full sync
                 channel.sync_token = None
+
+                # Optional: Clear local events if we want to rebuild from scratch to avoid duplicates
+                # if the logic below isn't perfectly idempotent.
+                # However, our logic below is an "upsert" based on google_id, so it should be fine.
+                # If an event was deleted in the gap, full sync won't return it, so we won't know to delete it locally.
+                # To be purely correct, on 410, we should likely fetch ALL events and detect deletions.
+                # But for now, we just re-sync what Google gives us.
+
                 db.commit()
                 continue # Retry loop with no token
             else:
+                logger.error(f"Google API Error during sync: {e}")
                 raise e
 
         items = result.get('items', [])
@@ -224,7 +237,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         channel.sync_token = new_sync_token
         channel.updated_at = datetime.now(timezone.utc)
         db.commit()
-        print(f"Sync complete. New token: {new_sync_token}")
+        logger.info(f"Sync complete. New token: {new_sync_token}")
 
 
 @router.get("/webhooks/google-drive/status")
