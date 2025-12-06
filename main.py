@@ -20,6 +20,17 @@ logger = logging.getLogger("pipedesk_drive.main")
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up application...")
+    
+    # Run database migrations
+    try:
+        from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
+        logger.info("Running database migrations...")
+        migrate_add_soft_delete_fields()
+        logger.info("Database migrations completed successfully")
+    except Exception as e:
+        logger.error(f"Failed to run migrations: {e}")
+        # Continue startup even if migrations fail (columns may already exist)
+    
     try:
         scheduler_service.start()
     except Exception as e:
