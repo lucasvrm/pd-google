@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from config import config
 from datetime import datetime, timezone
 import json
+import traceback
 
 router = APIRouter()
 
@@ -120,7 +121,6 @@ def get_entity_drive(
         # Catch errors from HierarchyService (e.g. Lead not found in DB)
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -588,7 +588,6 @@ def search_files_and_folders(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

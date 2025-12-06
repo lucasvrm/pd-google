@@ -14,6 +14,10 @@ class SearchService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _format_datetime(self, dt: Optional[datetime]) -> Optional[str]:
+        """Helper to format datetime to ISO string, handling None values."""
+        return dt.isoformat() if dt else None
+
     def search_files_and_folders(
         self,
         entity_type: Optional[str] = None,
@@ -64,8 +68,9 @@ class SearchService:
         )
         
         # Build folder query
-        # Only search folders if no file-specific mime_type is specified
-        # or if searching for the folder mime type
+        # Only search folders if:
+        # 1. No mime_type filter is specified (include all), OR
+        # 2. Explicitly searching for the folder mime type
         folder_results = []
         if not mime_type or mime_type == "application/vnd.google-apps.folder":
             folder_results = self._search_folders(
@@ -81,7 +86,8 @@ class SearchService:
         all_results = file_results + folder_results
         
         # Sort by created_at descending (newest first)
-        all_results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        # Handle None values by treating them as the oldest (empty string sorts before dates)
+        all_results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
         
         # Apply pagination
         total = len(all_results)
@@ -144,8 +150,8 @@ class SearchService:
                 "mimeType": file.mime_type,
                 "size": file.size,
                 "parent_folder_id": file.parent_folder_id,
-                "created_at": file.created_at.isoformat() if file.created_at else None,
-                "deleted_at": file.deleted_at.isoformat() if file.deleted_at else None,
+                "created_at": self._format_datetime(file.created_at),
+                "deleted_at": self._format_datetime(file.deleted_at),
                 "type": "file",
             })
         
@@ -199,8 +205,8 @@ class SearchService:
                 "mimeType": "application/vnd.google-apps.folder",
                 "entity_type": folder.entity_type,
                 "entity_id": folder.entity_id,
-                "created_at": folder.created_at.isoformat() if folder.created_at else None,
-                "deleted_at": folder.deleted_at.isoformat() if folder.deleted_at else None,
+                "created_at": self._format_datetime(folder.created_at),
+                "deleted_at": self._format_datetime(folder.deleted_at),
                 "type": "folder",
             })
         
