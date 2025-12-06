@@ -613,7 +613,7 @@ web: gunicorn -k uvicorn.workers.UvicornWorker main:app
    - **Name:** `pipedesk-drive-backend` (ou nome desejado)
    - **Region:** Escolha a região mais próxima dos usuários
    - **Branch:** `main`
-   - **Runtime:** `Python 3`
+   - **Runtime:** `Python 3.12` (ou versão compatível - veja `requirements.txt`)
    - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `gunicorn -k uvicorn.workers.UvicornWorker main:app`
 
@@ -648,7 +648,11 @@ DRIVE_ROOT_FOLDER_ID=1234567890abcdef
 ```
 
 **Importante:**
-- A variável `DATABASE_URL` será preenchida automaticamente se você conectar o PostgreSQL do Render
+- Para conectar o PostgreSQL ao web service automaticamente:
+  1. No painel do Web Service, vá em **"Environment"**
+  2. Clique em **"Add from database"** e selecione o banco PostgreSQL criado
+  3. O Render preencherá automaticamente a variável `DATABASE_URL`
+- Alternativamente, copie manualmente a **Internal Database URL** do PostgreSQL e adicione como variável de ambiente
 - Para `GOOGLE_SERVICE_ACCOUNT_JSON`, cole todo o conteúdo do arquivo JSON da Service Account (em uma única linha ou entre aspas)
 - Se preferir usar arquivo, faça upload via SSH ou configure como secret file
 
@@ -688,10 +692,7 @@ python seed_db.py
 **⚠️ Atenção:**
 - O plano gratuito do Render pode ter limitações de tempo de execução
 - Considere criar um **Background Worker** separado para scripts longos de inicialização
-- Migrations podem ser executadas automaticamente adicionando ao `Build Command`:
-  ```
-  pip install -r requirements.txt && python init_db.py
-  ```
+- **Não recomendado:** Executar migrations automaticamente no `Build Command` pode causar problemas com múltiplas instâncias sendo deployadas simultaneamente. Prefira executar manualmente via Shell após o primeiro deploy.
 
 #### 6. Monitoramento e Logs
 
