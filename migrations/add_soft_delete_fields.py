@@ -17,8 +17,9 @@ def migrate_add_soft_delete_fields():
     
     print("Starting migration: Adding soft delete fields...")
     
-    with engine.connect() as conn:
-        try:
+    try:
+        # Use engine.begin() for automatic transaction management in SQLAlchemy 2.0
+        with engine.begin() as conn:
             # Add soft delete fields to drive_files table
             print("Adding soft delete fields to drive_files table...")
             
@@ -119,13 +120,15 @@ def migrate_add_soft_delete_fields():
             except Exception as e:
                 print(f"  - Index creation note: {e}")
             
-            conn.commit()
+            # Transaction will auto-commit when exiting the with block successfully
             print("\n✅ Migration completed successfully!")
-            
-        except Exception as e:
-            conn.rollback()
-            print(f"\n❌ Migration failed: {e}")
-            raise
+    except Exception as e:
+        print(f"\n❌ Migration failed: {e}")
+        print("\nTroubleshooting:")
+        print("  - Verify database connection is working")
+        print("  - Check if tables 'drive_files' and 'google_drive_folders' exist")
+        print("  - Ensure database user has ALTER TABLE permissions")
+        raise
 
 if __name__ == "__main__":
     migrate_add_soft_delete_fields()
