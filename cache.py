@@ -4,30 +4,24 @@ import json
 from typing import Any, Optional
 from config import config
 
-class CacheConfig:
-    """Configuration for Redis cache"""
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    REDIS_CACHE_ENABLED = os.getenv("REDIS_CACHE_ENABLED", "true").lower() == "true"
-    REDIS_DEFAULT_TTL = int(os.getenv("REDIS_DEFAULT_TTL", "180"))  # 3 minutes default
-
 class CacheService:
     """Redis cache service for Google Drive operations"""
     
     def __init__(self):
-        self.enabled = CacheConfig.REDIS_CACHE_ENABLED and not config.USE_MOCK_DRIVE
+        self.enabled = config.REDIS_CACHE_ENABLED and not config.USE_MOCK_DRIVE
         self.client = None
         
         if self.enabled:
             try:
                 self.client = redis.from_url(
-                    CacheConfig.REDIS_URL,
+                    config.REDIS_URL,
                     decode_responses=True,
                     socket_connect_timeout=5,
                     socket_timeout=5
                 )
                 # Test connection
                 self.client.ping()
-                print(f"✓ Redis cache enabled (TTL: {CacheConfig.REDIS_DEFAULT_TTL}s)")
+                print(f"✓ Redis cache enabled (TTL: {config.REDIS_DEFAULT_TTL}s)")
             except Exception as e:
                 print(f"⚠ Redis connection failed, cache disabled: {e}")
                 self.enabled = False
@@ -74,7 +68,7 @@ class CacheService:
             return False
         
         try:
-            ttl = ttl or CacheConfig.REDIS_DEFAULT_TTL
+            ttl = ttl or config.REDIS_DEFAULT_TTL
             serialized = json.dumps(value)
             self.client.setex(key, ttl, serialized)
             return True
