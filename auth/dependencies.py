@@ -22,15 +22,16 @@ async def get_current_user(
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() == "bearer" and token:
             try:
-                return verify_supabase_jwt(token)
+                user_context = verify_supabase_jwt(token)
+                if user_context is not None:
+                    # JWT verification succeeded
+                    return user_context
+                # JWT secret not configured, log warning and fall through to legacy auth
+                logger.warning("JWT token provided but SUPABASE_JWT_SECRET not configured, falling back to legacy authentication")
             except jwt.ExpiredSignatureError:
                 raise HTTPException(status_code=401, detail="Token has expired")
             except jwt.InvalidTokenError as e:
                 raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-            except ValueError as e:
-                # If secret is missing configuration error
-                logger.error(f"JWT Configuration Error: {e}")
-                raise HTTPException(status_code=500, detail="Authentication configuration error")
             except Exception as e:
                 logger.error(f"Unexpected JWT Error: {e}")
                 raise HTTPException(status_code=401, detail="Could not validate credentials")

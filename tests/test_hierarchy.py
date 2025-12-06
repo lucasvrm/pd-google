@@ -82,9 +82,9 @@ def test_get_drive_company():
     pass
 
 def test_invalid_entity_type():
-    response = client.get("/drive/invalid/123")
+    response = client.get("/drive/invalid/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
     assert response.status_code == 400
 
 def test_contact_disabled():
-    response = client.get("/drive/contact/123")
+    response = client.get("/drive/contact/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
     assert response.status_code == 400

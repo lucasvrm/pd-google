@@ -10,7 +10,7 @@ class UserContext:
     email: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-def verify_supabase_jwt(token: str) -> UserContext:
+def verify_supabase_jwt(token: str) -> Optional[UserContext]:
     """
     Verifies a Supabase JWT token and returns the user context.
 
@@ -18,18 +18,16 @@ def verify_supabase_jwt(token: str) -> UserContext:
         token: The JWT token string (without 'Bearer ' prefix)
 
     Returns:
-        UserContext: A dataclass containing the user ID and role.
+        UserContext: A dataclass containing the user ID and role, or None if JWT secret is not configured.
 
     Raises:
         jwt.ExpiredSignatureError: If the token has expired.
         jwt.InvalidTokenError: If the token is invalid (bad signature, etc).
-        ValueError: If SUPABASE_JWT_SECRET is not set.
     """
     secret = os.getenv("SUPABASE_JWT_SECRET")
     if not secret:
-        # In development/test without secret, we might want to warn or fail.
-        # For security, we should fail if we can't verify.
-        raise ValueError("SUPABASE_JWT_SECRET environment variable is not set")
+        # JWT authentication is not configured, return None to allow fallback to legacy auth
+        return None
 
     # Supabase uses HS256 by default
     payload = jwt.decode(
