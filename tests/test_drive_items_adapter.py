@@ -9,13 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database import Base
+from database import Base, get_db
 from main import app
 import models
 import os
 from unittest.mock import patch
 from services.google_drive_mock import GoogleDriveService
-from routers.drive_items_adapter import get_db as adapter_get_db
 
 # Setup Test DB
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_drive_items_adapter.db"
@@ -42,7 +41,7 @@ def setup_module(module):
         os.remove("./test_drive_items_adapter.db")
 
     # Override dependency BEFORE creating tables
-    app.dependency_overrides[adapter_get_db] = override_get_db
+    app.dependency_overrides[get_db] = override_get_db
 
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()

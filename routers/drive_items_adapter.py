@@ -10,7 +10,7 @@ contract expected by the frontend without requiring frontend changes.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from database import SessionLocal
+from database import get_db
 from services.google_drive_mock import GoogleDriveService
 from services.google_drive_real import GoogleDriveRealService
 from services.hierarchy_service import HierarchyService
@@ -47,13 +47,6 @@ class DriveItemsResponse(BaseModel):
     """Frontend-expected response format"""
     items: List[DriveItemResponse]
     total: int
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.get("/items", response_model=DriveItemsResponse)
