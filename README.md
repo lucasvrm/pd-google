@@ -163,6 +163,7 @@ Deal - [Nome do Deal]/
 - Python 3.12+
 - pip
 - PostgreSQL (produção) ou SQLite (desenvolvimento)
+- Redis (opcional, para cache de operações do Drive)
 - Conta Google Cloud com Drive API habilitada (para modo real)
 
 ### 1. Clonar o Repositório
@@ -196,11 +197,22 @@ GOOGLE_SERVICE_ACCOUNT_JSON={"type": "service_account", "project_id": "...", ...
 
 # Opcional: Pasta raiz no Drive (para isolar estruturas)
 DRIVE_ROOT_FOLDER_ID=1234567890abcdef
+
+# Redis Cache (opcional, recomendado para produção)
+REDIS_URL=redis://localhost:6379/0
+REDIS_CACHE_ENABLED=true
+REDIS_DEFAULT_TTL=180  # Tempo de vida do cache em segundos (padrão: 180s = 3min)
 ```
 
 **Modo Mock (desenvolvimento/testes):**
 ```env
 USE_MOCK_DRIVE=true
+# Cache é automaticamente desabilitado em modo mock
+```
+
+**Desabilitar Cache:**
+```env
+REDIS_CACHE_ENABLED=false
 ```
 
 ### 4. Inicializar o Banco de Dados
@@ -219,7 +231,63 @@ Isso criará:
 - Templates para Lead, Deal e Company
 - Dados exemplo de Company, Lead e Deal (apenas em SQLite)
 
-### 6. Executar a Aplicação
+### 6. Configurar Redis (Opcional, Recomendado para Produção)
+
+O Redis é usado como cache para reduzir chamadas repetidas à API do Google Drive, melhorando significativamente a performance em operações de listagem.
+
+**Instalar Redis localmente:**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install redis-server
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+```
+
+**macOS (via Homebrew):**
+```bash
+brew install redis
+brew services start redis
+```
+
+**Docker:**
+```bash
+docker run -d -p 6379:6379 --name redis redis:alpine
+```
+
+**Verificar se Redis está rodando:**
+```bash
+redis-cli ping
+# Deve retornar: PONG
+```
+
+**Configurar variáveis de ambiente:**
+```env
+REDIS_URL=redis://localhost:6379/0
+REDIS_CACHE_ENABLED=true
+REDIS_DEFAULT_TTL=180  # 3 minutos
+```
+
+**Como funciona o cache:**
+- ✅ Operações de **leitura** (`list_files`) usam cache com TTL configurável
+- ✅ Cache é **invalidado automaticamente** após operações de escrita (upload, criação de pasta)
+- ✅ Em modo **mock** (`USE_MOCK_DRIVE=true`), o cache é automaticamente desabilitado
+- ✅ Se Redis não estiver disponível, o sistema continua funcionando normalmente (degradação graciosa)
+
+**Monitorar cache:**
+```bash
+# Ver chaves armazenadas
+redis-cli KEYS "drive:*"
+
+# Ver valor de uma chave específica
+redis-cli GET "drive:list_files:folder-id"
+
+# Limpar todo o cache
+redis-cli FLUSHDB
+```
+
+### 7. Executar a Aplicação
 
 **Desenvolvimento:**
 ```bash
@@ -434,6 +502,32 @@ Integração real com Google Drive API v3.
 **Autenticação:** Service Account JSON  
 **Métodos:** Mesmos do Mock + `add_permission(file_id, role, email)`
 
+**Cache integrado:**
+- ✅ `list_files(folder_id)` usa cache Redis (TTL configurável)
+- ✅ `upload_file()` e `create_folder()` invalidam cache automaticamente
+- ✅ Cache desabilitado em modo mock ou quando `REDIS_CACHE_ENABLED=false`
+
+### CacheService
+Camada de cache Redis para operações do Google Drive.
+
+**Funcionalidades:**
+- `get_from_cache(key)` - Recupera valor do cache
+- `set_in_cache(key, value, ttl)` - Armazena valor no cache
+- `delete_key(key)` - Remove chave específica
+- `invalidate_cache(pattern)` - Remove todas as chaves que correspondem a um padrão
+- `flush_all()` - Limpa todo o cache (use com cautela)
+
+**Comportamento:**
+- Habilitado apenas em modo **real** (`USE_MOCK_DRIVE=false`)
+- Degradação graciosa: se Redis não estiver disponível, continua funcionando sem cache
+- Chaves de cache: formato `drive:list_files:{folder_id}`
+- TTL padrão: 180 segundos (configurável via `REDIS_DEFAULT_TTL`)
+
+**Invalidação automática:**
+- Upload de arquivo → invalida cache da pasta pai
+- Criação de pasta → invalida cache da pasta pai
+- Soft delete → invalida cache da pasta impactada
+
 ### HierarchyService
 Gerencia criação e manutenção de hierarquias de pastas.
 
@@ -482,6 +576,7 @@ client/customer → reader
 
 ```
 tests/
+├── test_cache.py              # Testes do sistema de cache Redis
 ├── test_hierarchy.py          # Testes de hierarquia e integração
 ├── test_mock_drive.py         # Testes do serviço mock
 └── test_template_recursion.py # Testes de templates aninhados
@@ -512,6 +607,18 @@ Os testes usam:
 - **Fixtures:** Dados de exemplo criados em `setup_module()`
 
 ### Testes Existentes
+
+#### test_cache.py
+- ✅ `test_cache_disabled_in_mock_mode` - Cache desabilitado em modo mock
+- ✅ `test_cache_disabled_when_redis_cache_enabled_false` - Cache desabilitado via configuração
+- ✅ `test_cache_operations_when_disabled` - Operações seguras quando desabilitado
+- ✅ `test_cache_set_and_get` - Operações básicas de set/get
+- ✅ `test_cache_get_miss` - Comportamento em cache miss
+- ✅ `test_cache_delete_key` - Deletar chave específica
+- ✅ `test_cache_invalidate_pattern` - Invalidar por padrão
+- ✅ `test_cache_flush_all` - Limpar todo o cache
+- ✅ `test_cache_connection_failure` - Degradação graciosa em falha de conexão
+- ✅ `test_cache_with_default_ttl` - TTL padrão configurável
 
 #### test_mock_drive.py
 - ✅ `test_create_folder` - Criação de pasta
@@ -1003,7 +1110,7 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 
 #### Alta Prioridade
 - [x] **Webhooks do Google Drive** - Notificações em tempo real de mudanças ✅
-- [ ] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive
+- [x] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive ✅
 - [ ] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover
 - [ ] **Busca Avançada** - Buscar arquivos por nome, conteúdo, data, etc.
 

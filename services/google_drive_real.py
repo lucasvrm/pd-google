@@ -5,6 +5,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from config import config
+from cache import cache_service
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
@@ -51,6 +52,12 @@ class GoogleDriveRealService:
             file_metadata['parents'] = [parent_id]
 
         file = self.service.files().create(body=file_metadata, fields='id, name, mimeType, parents, createdTime').execute()
+        
+        # Invalidate cache for parent folder listing
+        if parent_id:
+            cache_key = f"drive:list_files:{parent_id}"
+            cache_service.delete_key(cache_key)
+        
         return file
 
     def upload_file(self, file_content: bytes, name: str, mime_type: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
@@ -67,10 +74,22 @@ class GoogleDriveRealService:
             media_body=media,
             fields='id, name, mimeType, parents, size, createdTime, webViewLink'
         ).execute()
+        
+        # Invalidate cache for parent folder listing
+        if parent_id:
+            cache_key = f"drive:list_files:{parent_id}"
+            cache_service.delete_key(cache_key)
+        
         return file
 
     def list_files(self, folder_id: str) -> List[Dict[str, Any]]:
         self._check_auth()
+        
+        # Try to get from cache first
+        cache_key = f"drive:list_files:{folder_id}"
+        cached_result = cache_service.get_from_cache(cache_key)
+        if cached_result is not None:
+            return cached_result
 
         query = f"'{folder_id}' in parents and trashed = false"
         results = self.service.files().list(
@@ -79,7 +98,12 @@ class GoogleDriveRealService:
             fields="nextPageToken, files(id, name, mimeType, parents, webViewLink, createdTime, size)"
         ).execute()
 
-        return results.get('files', [])
+        files = results.get('files', [])
+        
+        # Store in cache
+        cache_service.set_in_cache(cache_key, files)
+        
+        return files
 
     def get_file(self, file_id: str) -> Dict[str, Any]:
         self._check_auth()
