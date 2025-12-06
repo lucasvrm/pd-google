@@ -1,4 +1,4 @@
-# PipeDesk Google Drive Backend//
+# PipeDesk Google Drive Backend
 
 Backend API para gerenciamento de estruturas hierárquicas de pastas no Google Drive para o sistema CRM PipeDesk.
 
