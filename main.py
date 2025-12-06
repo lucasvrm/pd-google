@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import drive, webhooks, calendar
+from routers import drive, webhooks, calendar, drive_items_adapter
 from database import engine
 import models
 from services.scheduler_service import scheduler_service
@@ -48,6 +48,7 @@ app.add_middleware(
 app.include_router(drive.router)
 app.include_router(webhooks.router)
 app.include_router(calendar.router)
+app.include_router(drive_items_adapter.router, prefix="/api/drive")
 
 @app.get("/")
 def read_root():
