@@ -12,9 +12,15 @@ The easiest way to run the migration on Supabase:
 2. Go to the **SQL Editor**
 3. Copy the contents of `add_soft_delete_fields.sql`
 4. Paste and run the script
-5. Check the messages to confirm all columns and indexes were created
+5. Check the messages to confirm all tables, columns and indexes were created
 
-This script is idempotent - safe to run multiple times. It will skip columns that already exist.
+**What this script does:**
+- Creates `drive_files` and `google_drive_folders` tables if they don't exist (with all columns including soft delete fields)
+- If tables already exist, adds only the missing soft delete columns
+- Creates all necessary indexes
+- Works regardless of whether tables exist or not
+
+This script is idempotent - safe to run multiple times. It will skip tables/columns that already exist.
 
 ## Option 2: Python Script (For automated deployments)
 
