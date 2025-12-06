@@ -266,6 +266,30 @@ class TestDriveItemsEndpoint:
         # Clean up
         del os.environ["SUPABASE_JWT_SECRET"]
 
+    def test_jwt_fallback_to_legacy_when_secret_not_set(self, client):
+        """Test that JWT gracefully falls back to legacy auth when secret is not configured"""
+        import os
+        
+        # Ensure JWT secret is not set
+        if "SUPABASE_JWT_SECRET" in os.environ:
+            del os.environ["SUPABASE_JWT_SECRET"]
+        
+        # Try to authenticate with Bearer token but provide legacy headers as fallback
+        response = client.get(
+            "/api/drive/items?entityType=deal&entityId=deal-items-1",
+            headers={
+                "Authorization": "Bearer some-jwt-token",
+                "x-user-id": "test-user",
+                "x-user-role": "admin"
+            }
+        )
+        
+        # Should succeed using legacy headers instead of throwing 500 error
+        assert response.status_code == 200
+        data = response.json()
+        assert "items" in data
+        assert "total" in data
+
     def test_company_entity_type(self, client):
         """Test with company entity type"""
         response = client.get(
