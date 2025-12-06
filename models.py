@@ -132,3 +132,57 @@ class DriveChangeLog(Base):
     event_type = Column(String, nullable=True)  # Additional event information
     received_at = Column(DateTime(timezone=True), server_default=func.now())
     raw_headers = Column(Text, nullable=True)  # JSON string of all webhook headers for debugging
+
+
+class CalendarSyncState(Base):
+    """
+    Stores sync tokens for Google Calendar channels.
+    Used to perform incremental syncs (fetching only what changed).
+    """
+    __tablename__ = "calendar_sync_states"
+
+    id = Column(Integer, primary_key=True, index=True)
+    resource_id = Column(String)  # Resource ID returned by Google
+    channel_id = Column(String, unique=True, index=True)  # Our UUID for the webhook channel
+    calendar_id = Column(String, default='primary')  # ID of the monitored calendar
+    sync_token = Column(String)  # Token for fetching next changes
+    expiration = Column(DateTime(timezone=True))  # Channel expiration
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class CalendarEvent(Base):
+    """
+    Local mirror of Google Calendar events.
+    """
+    __tablename__ = "calendar_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_event_id = Column(String, unique=True, index=True, nullable=False)
+    calendar_id = Column(String, default='primary')
+
+    # Main Data
+    summary = Column(String)
+    description = Column(Text)
+    start_time = Column(DateTime(timezone=True))
+    end_time = Column(DateTime(timezone=True))
+
+    # Important Links
+    meet_link = Column(String)
+    html_link = Column(String)
+
+    # Metadata
+    status = Column(String)  # confirmed, tentative, cancelled
+    organizer_email = Column(String)
+
+    # Attendees (stored as JSON for simplicity in MVP)
+    # Using String/Text for SQLite compatibility if needed, but JSON type for PG is better
+    # For compatibility with both, we use JSON from sqlalchemy.dialects.postgresql if available,
+    # but since this project supports SQLite dev, we might use a generic JSON type or Text.
+    # Given the requirements.txt has psycopg2, we can assume PG is target, but let's be safe.
+    # We will import JSON from sqlalchemy.types which works on recent SQLAlchemy versions for both.
+    attendees = Column(Text) # Storing as JSON string for maximum compatibility
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
