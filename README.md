@@ -520,8 +520,8 @@ Os testes usam:
 #### test_hierarchy.py
 - ✅ `test_read_root` - Endpoint raiz
 - ⚠️ `test_get_drive_company` - Estrutura de empresa (placeholder)
-- ✅ `test_invalid_entity_type` - Validação de tipo
-- ✅ `test_contact_disabled` - Tipo contact desabilitado
+- ✅ `test_invalid_entity_type` - Validação de tipo inválido
+- ✅ `test_contact_disabled` - Validação que tipo 'contact' não é suportado
 
 #### test_template_recursion.py
 - ⚠️ `test_template_recursion` - Templates aninhados (requer `USE_MOCK_DRIVE=true`)
