@@ -18,7 +18,8 @@ def verify_supabase_jwt(token: str) -> Optional[UserContext]:
         token: The JWT token string (without 'Bearer ' prefix)
 
     Returns:
-        UserContext: A dataclass containing the user ID and role, or None if JWT secret is not configured.
+        Optional[UserContext]: A UserContext dataclass containing the user ID and role if verification succeeds,
+                               or None if JWT secret is not configured (allowing fallback to legacy auth).
 
     Raises:
         jwt.ExpiredSignatureError: If the token has expired.
