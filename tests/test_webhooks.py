@@ -316,9 +316,21 @@ def test_get_active_channels():
     db.commit()
     
     # Register multiple channels
-    webhook_service.register_webhook_channel("folder-1", ttl_hours=24)
-    webhook_service.register_webhook_channel("folder-2", ttl_hours=24)
-    webhook_service.register_webhook_channel("folder-3", ttl_hours=24)
+    webhook_service.register_webhook_channel(
+        folder_id="folder-1",
+        resource_type="folder",
+        ttl_hours=24
+    )
+    webhook_service.register_webhook_channel(
+        folder_id="folder-2",
+        resource_type="folder",
+        ttl_hours=24
+    )
+    webhook_service.register_webhook_channel(
+        folder_id="folder-3",
+        resource_type="folder",
+        ttl_hours=24
+    )
     
     # Get active channels
     active_channels = webhook_service.get_active_channels()
@@ -369,8 +381,16 @@ def test_webhook_status_endpoint():
     webhook_service = WebhookService(db)
     
     # Register some channels
-    webhook_service.register_webhook_channel("status-folder-1", ttl_hours=24)
-    webhook_service.register_webhook_channel("status-folder-2", ttl_hours=24)
+    webhook_service.register_webhook_channel(
+        folder_id="status-folder-1",
+        resource_type="folder",
+        ttl_hours=24
+    )
+    webhook_service.register_webhook_channel(
+        folder_id="status-folder-2",
+        resource_type="folder",
+        ttl_hours=24
+    )
     
     db.close()
     

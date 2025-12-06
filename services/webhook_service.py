@@ -5,7 +5,7 @@ Handles channel registration, renewal, and deactivation.
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 from sqlalchemy.orm import Session
 import models
 from services.google_drive_real import GoogleDriveRealService
@@ -196,7 +196,7 @@ class WebhookService:
         
         return True
     
-    def get_active_channels(self) -> list[models.DriveWebhookChannel]:
+    def get_active_channels(self) -> List[models.DriveWebhookChannel]:
         """
         Get all active webhook channels.
         
