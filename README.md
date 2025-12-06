@@ -594,43 +594,108 @@ def test_example():
 
 ## 🚀 Deploy
 
-### Heroku
+### Render
 
-O projeto está configurado para deploy no Heroku via `Procfile`:
+A aplicação está configurada para deploy no Render, utilizando o `Procfile` existente:
 
 ```
 web: gunicorn -k uvicorn.workers.UvicornWorker main:app
 ```
 
-**Passos:**
+**Passos para Deploy:**
 
-1. Criar app no Heroku:
+#### 1. Criar Web Service no Render
+
+1. Acesse [render.com](https://render.com) e faça login
+2. No dashboard, clique em **"New +"** → **"Web Service"**
+3. Conecte seu repositório GitHub (`lucasvrm/pd-google`)
+4. Configure o serviço:
+   - **Name:** `pipedesk-drive-backend` (ou nome desejado)
+   - **Region:** Escolha a região mais próxima dos usuários
+   - **Branch:** `main`
+   - **Runtime:** `Python 3`
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT`
+
+#### 2. Configurar Banco de Dados PostgreSQL
+
+1. No dashboard do Render, clique em **"New +"** → **"PostgreSQL"**
+2. Configure o banco:
+   - **Name:** `pipedesk-drive-db`
+   - **Database:** `pipedesk_drive`
+   - **User:** (gerado automaticamente)
+   - **Region:** Mesma do web service
+3. Após criação, copie a **Internal Database URL** (formato: `postgresql://user:pass@host/db`)
+
+#### 3. Configurar Variáveis de Ambiente
+
+No painel do Web Service, vá em **"Environment"** e adicione:
+
 ```bash
-heroku create pipedesk-drive-backend
+# Database - usar Internal Database URL do PostgreSQL criado
+DATABASE_URL=postgresql://user:password@host:5432/pipedesk_drive
+
+# Google Drive - modo de operação
+USE_MOCK_DRIVE=false
+
+# Credenciais Google Service Account (JSON completo como string)
+GOOGLE_SERVICE_ACCOUNT_JSON={"type": "service_account", "project_id": "...", "private_key": "...", ...}
+
+# Opcional: Pasta raiz no Drive para isolar estruturas
+DRIVE_ROOT_FOLDER_ID=1234567890abcdef
 ```
 
-2. Configurar variáveis de ambiente:
+**Importante:**
+- A variável `DATABASE_URL` será preenchida automaticamente se você conectar o PostgreSQL do Render
+- Para `GOOGLE_SERVICE_ACCOUNT_JSON`, cole todo o conteúdo do arquivo JSON da Service Account (em uma única linha ou entre aspas)
+- Se preferir usar arquivo, faça upload via SSH ou configure como secret file
+
+#### 4. Deploy Automático
+
+Após configurar as variáveis:
+1. O Render iniciará o build automaticamente
+2. A aplicação será deployada quando o build completar
+3. Acesse a URL fornecida pelo Render (ex: `https://pipedesk-drive-backend.onrender.com`)
+
+#### 5. Inicializar Banco de Dados
+
+Para executar scripts de inicialização no Render, use o **Shell** do serviço:
+
+1. No dashboard do Web Service, clique em **"Shell"** (ou use o Render CLI)
+2. Execute os comandos:
+
 ```bash
-heroku config:set USE_MOCK_DRIVE=false
-heroku config:set DATABASE_URL=postgresql://...
-heroku config:set GOOGLE_SERVICE_ACCOUNT_JSON='{"type": "service_account", ...}'
+python init_db.py
+python seed_db.py
 ```
 
-3. Adicionar PostgreSQL:
+**Alternativa via Render CLI:**
 ```bash
-heroku addons:create heroku-postgresql:mini
+# Instalar Render CLI
+npm install -g render
+
+# Login
+render login
+
+# Executar comandos
+render shell pipedesk-drive-backend
+python init_db.py
+python seed_db.py
 ```
 
-4. Deploy:
-```bash
-git push heroku main
-```
+**⚠️ Atenção:**
+- O plano gratuito do Render pode ter limitações de tempo de execução
+- Considere criar um **Background Worker** separado para scripts longos de inicialização
+- Migrations podem ser executadas automaticamente adicionando ao `Build Command`:
+  ```
+  pip install -r requirements.txt && python init_db.py
+  ```
 
-5. Inicializar BD:
-```bash
-heroku run python init_db.py
-heroku run python seed_db.py
-```
+#### 6. Monitoramento e Logs
+
+- **Logs em tempo real:** Disponíveis na aba "Logs" do dashboard
+- **Métricas:** CPU, memória e latência disponíveis na aba "Metrics"
+- **Health checks:** Configure endpoint `/health` se necessário
 
 ### Docker (Futuro)
 
@@ -648,10 +713,11 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0
 
 ### Variáveis de Ambiente em Produção
 
-- ✅ `DATABASE_URL` - Connection string PostgreSQL
-- ✅ `GOOGLE_SERVICE_ACCOUNT_JSON` - Credenciais Google (JSON ou path)
-- ✅ `USE_MOCK_DRIVE=false` - Usar Drive real
-- ⚠️ `DRIVE_ROOT_FOLDER_ID` - (Opcional) Pasta raiz para isolar ambiente
+- ✅ `DATABASE_URL` - Connection string PostgreSQL (fornecida pelo Render ou manual)
+- ✅ `GOOGLE_SERVICE_ACCOUNT_JSON` - Credenciais Google Service Account (JSON completo como string)
+- ✅ `USE_MOCK_DRIVE=false` - Usar Google Drive real (não mock)
+- ⚠️ `DRIVE_ROOT_FOLDER_ID` - (Opcional) ID da pasta raiz no Drive para isolar ambientes
+- ⚠️ `PORT` - (Automático) Porta fornecida pelo Render (geralmente já configurada)
 
 ## 📝 Próximos Passos
 
