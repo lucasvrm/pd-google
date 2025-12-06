@@ -6,6 +6,7 @@ import models
 from services.scheduler_service import scheduler_service
 from contextlib import asynccontextmanager
 import logging
+from config import config
 
 # Configure Logging
 import logging_config # This initializes logging
@@ -32,10 +33,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-origins = [
-    "http://localhost:5173",  # Vite default
-    "http://127.0.0.1:5173",
-]
+# Parse CORS origins from config (comma-separated string)
+origins = [origin.strip() for origin in config.CORS_ORIGINS.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
