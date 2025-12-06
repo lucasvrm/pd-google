@@ -6,6 +6,7 @@ from services.google_drive_real import GoogleDriveRealService
 from services.template_service import TemplateService
 from services.permission_service import PermissionService
 from services.hierarchy_service import HierarchyService
+from services.search_service import SearchService
 from cache import cache_service
 import models
 from typing import List, Dict, Any, Optional
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from config import config
 from datetime import datetime, timezone
 import json
+import traceback
 
 router = APIRouter()
 
@@ -119,7 +121,6 @@ def get_entity_drive(
         # Catch errors from HierarchyService (e.g. Lead not found in DB)
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -461,4 +462,132 @@ def soft_delete_folder(
         "deleted_at": folder_record.deleted_at.isoformat(),
         "deleted_by": folder_record.deleted_by,
     }
+
+
+@router.get("/drive/search")
+def search_files_and_folders(
+    entity_type: Optional[str] = Query(default=None, description="Filter by entity type (company, lead, deal)"),
+    entity_id: Optional[str] = Query(default=None, description="Filter by specific entity ID"),
+    q: Optional[str] = Query(default=None, description="Text search term for file/folder name (partial match)"),
+    mime_type: Optional[str] = Query(default=None, description="Filter by MIME type"),
+    created_from: Optional[str] = Query(default=None, description="Filter by creation date from (ISO 8601)"),
+    created_to: Optional[str] = Query(default=None, description="Filter by creation date to (ISO 8601)"),
+    include_deleted: bool = Query(default=False, description="Include soft-deleted items in results"),
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=50, ge=1, le=100, description="Items per page (max 100)"),
+    db: Session = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="x-user-id"),
+    user_role: str | None = Header(default=None, alias="x-user-role"),
+):
+    """
+    Advanced search for files and folders.
+    
+    Supports filtering by:
+    - Entity (company/lead/deal) and entity ID
+    - Name (partial text match)
+    - MIME type
+    - Creation date range
+    - Deleted status
+    
+    Respects permission system - users can only search within entities they have access to.
+    Results are paginated for performance.
+    """
+    try:
+        # Validate entity_type if provided
+        if entity_type:
+            allowed_types = ["company", "lead", "deal"]
+            if entity_type not in allowed_types:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid entity_type. Allowed: {allowed_types}"
+                )
+        
+        # Check permissions - user must have at least reader access
+        perm_service = PermissionService(db)
+        if user_role:
+            # Use the entity_type from filter if available, otherwise use 'company' as default
+            permission = perm_service.get_drive_permission_from_app_role(
+                user_role, entity_type or "company"
+            )
+        else:
+            permission = perm_service.mock_check_permission(
+                user_id or "anonymous", entity_type or "company"
+            )
+        
+        # Parse date filters if provided
+        created_from_dt = None
+        created_to_dt = None
+        
+        if created_from:
+            try:
+                created_from_dt = datetime.fromisoformat(created_from.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid created_from format. Use ISO 8601 (e.g., 2025-12-01T00:00:00Z)"
+                )
+        
+        if created_to:
+            try:
+                created_to_dt = datetime.fromisoformat(created_to.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid created_to format. Use ISO 8601 (e.g., 2025-12-31T23:59:59Z)"
+                )
+        
+        # Perform search
+        search_service = SearchService(db)
+        results = search_service.search_files_and_folders(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            q=q,
+            mime_type=mime_type,
+            created_from=created_from_dt,
+            created_to=created_to_dt,
+            include_deleted=include_deleted,
+            page=page,
+            page_size=page_size,
+        )
+        
+        # Log search operation to audit log
+        search_metadata = {
+            "user_id": user_id,
+            "user_role": user_role,
+            "permission": permission,
+            "filters": {
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "q": q,
+                "mime_type": mime_type,
+                "created_from": created_from,
+                "created_to": created_to,
+                "include_deleted": include_deleted,
+            },
+            "results_count": results["total"],
+            "page": page,
+        }
+        
+        audit_entry = models.DriveChangeLog(
+            channel_id="search",
+            resource_id="search_operation",
+            resource_state="search",
+            changed_resource_id=None,
+            event_type="advanced_search",
+            raw_headers=json.dumps(search_metadata),
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        # Add permission to response
+        return {
+            **results,
+            "permission": permission,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 

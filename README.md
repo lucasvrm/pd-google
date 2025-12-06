@@ -137,6 +137,10 @@ Deal - [Nome do Deal]/
 - ✅ **POST** `/drive/{entity_type}/{entity_id}/upload` - Upload de arquivo
 - ✅ **DELETE** `/drive/{entity_type}/{entity_id}/files/{file_id}` - Soft delete de arquivo
 - ✅ **DELETE** `/drive/{entity_type}/{entity_id}/folders/{folder_id}` - Soft delete de pasta
+- ✅ **GET** `/drive/search` - Busca avançada de arquivos e pastas
+  - Filtros: `entity_type`, `entity_id`, `q` (nome), `mime_type`, `created_from`, `created_to`, `include_deleted`
+  - Paginação: `page`, `page_size` (máx 100)
+  - Respeita sistema de permissões e soft delete
 
 ### 4. Soft Delete
 
@@ -477,6 +481,106 @@ Para incluir itens marcados como deletados na listagem (uso administrativo):
 curl -X GET "http://localhost:8000/drive/company/comp-001?include_deleted=true" \
   -H "x-user-role: admin"
 ```
+
+#### 7. Busca Avançada de Arquivos e Pastas
+
+```bash
+GET /drive/search
+
+Headers:
+  x-user-role: admin|manager|analyst|new_business|client
+  x-user-id: user-uuid (opcional)
+
+Query Parameters:
+  entity_type: (opcional) company | lead | deal - Filtrar por tipo de entidade
+  entity_id: (opcional) UUID da entidade - Filtrar por entidade específica
+  q: (opcional) Termo de busca textual no nome (busca parcial, case-insensitive)
+  mime_type: (opcional) Filtrar por tipo MIME (ex: application/pdf, text/plain)
+  created_from: (opcional) Data de criação inicial (ISO 8601, ex: 2025-12-01T00:00:00Z)
+  created_to: (opcional) Data de criação final (ISO 8601, ex: 2025-12-31T23:59:59Z)
+  include_deleted: (opcional, default: false) Incluir itens marcados como deletados
+  page: (opcional, default: 1) Número da página (mínimo 1)
+  page_size: (opcional, default: 50) Itens por página (mínimo 1, máximo 100)
+
+Resposta:
+{
+  "items": [
+    {
+      "id": "file-id",
+      "name": "documento.pdf",
+      "mimeType": "application/pdf",
+      "size": 12345,
+      "type": "file",
+      "parent_folder_id": "folder-id",
+      "created_at": "2025-12-06T10:30:00+00:00",
+      "deleted_at": null
+    },
+    {
+      "id": "folder-id",
+      "name": "Lead - Importante",
+      "mimeType": "application/vnd.google-apps.folder",
+      "type": "folder",
+      "entity_type": "lead",
+      "entity_id": "lead-123",
+      "created_at": "2025-12-05T14:20:00+00:00",
+      "deleted_at": null
+    }
+  ],
+  "total": 25,
+  "page": 1,
+  "page_size": 50,
+  "total_pages": 1,
+  "permission": "owner"
+}
+```
+
+**Exemplos de Uso:**
+
+**Buscar todos os PDFs:**
+```bash
+curl -X GET "http://localhost:8000/drive/search?mime_type=application/pdf" \
+  -H "x-user-role: admin"
+```
+
+**Buscar arquivos com "contrato" no nome em uma empresa específica:**
+```bash
+curl -X GET "http://localhost:8000/drive/search?entity_type=company&entity_id=comp-123&q=contrato" \
+  -H "x-user-role: manager"
+```
+
+**Buscar arquivos criados em dezembro de 2025:**
+```bash
+curl -X GET "http://localhost:8000/drive/search?created_from=2025-12-01T00:00:00Z&created_to=2025-12-31T23:59:59Z" \
+  -H "x-user-role: admin"
+```
+
+**Buscar arquivos deletados de um lead:**
+```bash
+curl -X GET "http://localhost:8000/drive/search?entity_type=lead&entity_id=lead-456&include_deleted=true" \
+  -H "x-user-role: admin"
+```
+
+**Buscar com paginação (10 itens por página, página 2):**
+```bash
+curl -X GET "http://localhost:8000/drive/search?q=documento&page=2&page_size=10" \
+  -H "x-user-role: manager"
+```
+
+**Busca combinada - PDFs com "viabilidade" criados no último mês em deals:**
+```bash
+curl -X GET "http://localhost:8000/drive/search?entity_type=deal&q=viabilidade&mime_type=application/pdf&created_from=2025-11-06T00:00:00Z" \
+  -H "x-user-role: admin"
+```
+
+**Características da Busca Avançada:**
+- ✅ Respeita sistema de permissões (usuários só veem resultados que têm acesso)
+- ✅ Soft delete por padrão (itens deletados são ocultados, exceto com `include_deleted=true`)
+- ✅ Busca case-insensitive no nome
+- ✅ Suporte a múltiplos filtros combinados
+- ✅ Paginação para performance em grandes volumes
+- ✅ Registro em audit log de todas as buscas
+- ✅ Retorna tanto arquivos quanto pastas nos resultados
+- ✅ Ordenação por data de criação (mais recentes primeiro)
 
 ## 🗄️ Modelos de Dados
 
@@ -1198,7 +1302,7 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 - [x] **Webhooks do Google Drive** - Notificações em tempo real de mudanças ✅
 - [x] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive ✅
 - [x] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover ✅
-- [ ] **Busca Avançada** - Buscar arquivos por nome, conteúdo, data, etc.
+- [x] **Busca Avançada** - Buscar arquivos por nome, tipo, data, entidade com paginação ✅
 
 #### Média Prioridade
 - [ ] **Versionamento de Arquivos** - Controle de versões de documentos
