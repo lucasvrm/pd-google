@@ -6,6 +6,7 @@ import models
 from services.scheduler_service import scheduler_service
 from contextlib import asynccontextmanager
 import logging
+import asyncio
 from config import config
 
 # Configure Logging
@@ -23,7 +24,6 @@ async def lifespan(app: FastAPI):
     
     # Run database migrations in a separate thread to avoid blocking the event loop
     try:
-        import asyncio
         from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
         logger.info("Running database migrations...")
         await asyncio.to_thread(migrate_add_soft_delete_fields)
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     except ImportError as e:
         logger.error(f"Failed to import migration module: {e}")
     except Exception as e:
+        # Migration failures are not critical - columns may already exist
         logger.error(f"Migration error: {e}")
         logger.warning("Continuing startup - columns may already exist or database may not be initialized")
     
