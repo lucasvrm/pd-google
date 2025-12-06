@@ -1,68 +1,76 @@
 # Database Migrations
 
-This folder contains database migration scripts for adding soft delete functionality.
+Este repositório contém scripts de migração para adicionar soft delete às tabelas do backend pd-google.
 
-## Option 1: SQL Script (Recommended for Supabase)
+## Arquitetura
 
-**File:** `add_soft_delete_fields.sql`
+- **Backend pd-google**: Tem seu próprio banco de dados (PostgreSQL/SQLite) com as tabelas `drive_files` e `google_drive_folders`
+- **Supabase**: Banco principal do projeto onde apenas `google_drive_folders` é compartilhada
+- A tabela `drive_files` existe APENAS no banco do pd-google
 
-The easiest way to run the migration on Supabase:
+## Como Aplicar as Migrações
 
-1. Open your Supabase project
-2. Go to the **SQL Editor**
-3. Copy the contents of `add_soft_delete_fields.sql`
-4. Paste and run the script
-5. Check the messages to confirm all tables, columns and indexes were created
+### Para Bancos Existentes do Backend pd-google
 
-**What this script does:**
-- Creates `drive_files` and `google_drive_folders` tables if they don't exist (with all columns including soft delete fields)
-- If tables already exist, adds only the missing soft delete columns
-- Creates all necessary indexes
-- Works regardless of whether tables exist or not
-
-This script is idempotent - safe to run multiple times. It will skip tables/columns that already exist.
-
-## Option 2: Python Script (For automated deployments)
-
-**File:** `add_soft_delete_fields.py`
-
-This script runs automatically when the application starts (see `main.py`). You can also run it manually:
+Execute o script Python que adiciona os campos de soft delete:
 
 ```bash
 python migrations/add_soft_delete_fields.py
 ```
 
-The Python script is useful for:
-- Automated deployments
-- CI/CD pipelines
-- Local development with SQLite
+Este script adiciona as colunas `deleted_at`, `deleted_by` e `delete_reason` às tabelas `drive_files` e `google_drive_folders` no banco do backend.
 
-## What the Migration Does
+### Para Novas Instalações
 
-Adds three columns to `drive_files` and `google_drive_folders` tables:
+Não precisa fazer nada! O `init_db.py` já cria as tabelas com os campos de soft delete incluídos.
 
-- `deleted_at` (TIMESTAMP WITH TIME ZONE) - When the item was soft deleted
-- `deleted_by` (VARCHAR) - User ID who deleted the item
-- `delete_reason` (VARCHAR) - Optional reason for deletion
+```bash
+python init_db.py
+```
 
-Also creates indexes on `deleted_at` for efficient filtering of non-deleted items.
+### Para o Supabase
 
-## Verification
+Use o arquivo `add_soft_delete_fields.sql` **apenas para a tabela google_drive_folders**:
 
-After running the migration, verify the columns exist:
+1. Abra o projeto no Supabase
+2. Vá para o **SQL Editor**
+3. Copie o conteúdo de `migrations/add_soft_delete_fields.sql`
+4. Execute o script
 
+**Importante:** Este script SQL foi projetado para o Supabase e manipula apenas `google_drive_folders`. A lógica de arquivos (`drive_files`) fica totalmente no banco do pd-google.
+
+Para gerenciar migrações do Supabase de forma adequada, use a pasta `supabase/migrations/` do projeto principal, seguindo o fluxo oficial do Supabase.
+
+## O Que as Migrações Fazem
+
+Adicionam três colunas para soft delete:
+
+- `deleted_at` (TIMESTAMP WITH TIME ZONE) - Quando o item foi deletado
+- `deleted_by` (VARCHAR) - ID do usuário que deletou
+- `delete_reason` (VARCHAR) - Razão opcional para a deleção
+
+E criam índices em `deleted_at` para queries eficientes.
+
+## Script Python vs SQL
+
+- **Python** (`add_soft_delete_fields.py`): Para o banco do backend pd-google (recomendado)
+- **SQL** (`add_soft_delete_fields.sql`): Para adicionar campos no Supabase apenas em `google_drive_folders`
+
+## Verificação
+
+Após rodar a migração, verifique se as colunas foram criadas:
+
+**No banco do pd-google:**
+```python
+python -c "from database import engine; from sqlalchemy import inspect; inspector = inspect(engine); print([c['name'] for c in inspector.get_columns('drive_files')])"
+```
+
+**No Supabase:**
 ```sql
--- Check drive_files table
-SELECT column_name, data_type 
-FROM information_schema.columns 
-WHERE table_name = 'drive_files' 
-  AND column_name IN ('deleted_at', 'deleted_by', 'delete_reason');
-
--- Check google_drive_folders table
 SELECT column_name, data_type 
 FROM information_schema.columns 
 WHERE table_name = 'google_drive_folders' 
   AND column_name IN ('deleted_at', 'deleted_by', 'delete_reason');
 ```
 
-Both queries should return 3 rows each.
+Deve retornar 3 linhas.
