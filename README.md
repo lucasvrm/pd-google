@@ -615,7 +615,9 @@ web: gunicorn -k uvicorn.workers.UvicornWorker main:app
    - **Branch:** `main`
    - **Runtime:** `Python 3`
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT`
+   - **Start Command:** `gunicorn -k uvicorn.workers.UvicornWorker main:app`
+
+**Nota:** O Render configura automaticamente a variável `PORT` e o binding de rede. O comando acima usa o mesmo formato do `Procfile` existente.
 
 #### 2. Configurar Banco de Dados PostgreSQL
 
