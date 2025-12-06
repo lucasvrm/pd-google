@@ -64,14 +64,18 @@ class SearchService:
         )
         
         # Build folder query
-        folder_results = self._search_folders(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            q=q,
-            created_from=created_from,
-            created_to=created_to,
-            include_deleted=include_deleted,
-        )
+        # Only search folders if no file-specific mime_type is specified
+        # or if searching for the folder mime type
+        folder_results = []
+        if not mime_type or mime_type == "application/vnd.google-apps.folder":
+            folder_results = self._search_folders(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                q=q,
+                created_from=created_from,
+                created_to=created_to,
+                include_deleted=include_deleted,
+            )
         
         # Combine results
         all_results = file_results + folder_results
