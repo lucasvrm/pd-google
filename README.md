@@ -721,15 +721,289 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0
 - ✅ `USE_MOCK_DRIVE=false` - Usar Google Drive real (não mock)
 - ⚠️ `DRIVE_ROOT_FOLDER_ID` - (Opcional) ID da pasta raiz no Drive para isolar ambientes
 - ⚠️ `PORT` - (Automático) Porta fornecida pelo Render (geralmente já configurada)
+- ✅ `WEBHOOK_BASE_URL` - URL pública base para webhooks (ex: `https://pipedesk-drive-backend.onrender.com`)
+- ⚠️ `WEBHOOK_SECRET` - (Opcional) Token secreto para validação de webhooks
+
+## 🔔 Webhooks do Google Drive
+
+A aplicação suporta **notificações em tempo real** do Google Drive através de webhooks. Quando arquivos ou pastas são modificados no Drive, o Google envia uma notificação HTTP para o backend, permitindo sincronização e auditoria de mudanças.
+
+### Visão Geral
+
+O sistema de webhooks permite:
+- ✅ **Notificações em tempo real** de mudanças (add, update, remove, trash, etc.)
+- ✅ **Registro de canais** de notificação para pastas específicas
+- ✅ **Renovação automática** de canais antes da expiração
+- ✅ **Auditoria completa** de todas as mudanças recebidas
+- ✅ **Mapeamento automático** para entidades internas (Company, Lead, Deal)
+
+### Arquitetura
+
+```
+Google Drive → Webhook Notification → POST /webhooks/google-drive
+                                           ↓
+                                  Validate Headers & Channel
+                                           ↓
+                                  Log to DriveChangeLog
+                                           ↓
+                                  Map to DriveFolder/DriveFile
+```
+
+### Configuração
+
+#### 1. Variáveis de Ambiente
+
+```env
+# URL pública da aplicação (obrigatório para webhooks)
+WEBHOOK_BASE_URL=https://pipedesk-drive-backend.onrender.com
+
+# Token secreto para validação (opcional, mas recomendado)
+WEBHOOK_SECRET=seu-token-secreto-aleatorio
+```
+
+#### 2. Habilitar na Google Cloud Console
+
+Para usar webhooks em produção, você precisa configurar o domínio na Google Cloud:
+
+1. Acesse [Google Cloud Console](https://console.cloud.google.com)
+2. Navegue até **APIs & Services** → **Domain Verification**
+3. Adicione e verifique seu domínio (ex: `pipedesk-drive-backend.onrender.com`)
+4. Em **APIs & Services** → **Drive API**, certifique-se que a API está habilitada
+5. A Service Account precisa ter permissões para criar notificações
+
+**Nota:** A verificação de domínio é necessária apenas para ambientes de produção. Em desenvolvimento com `USE_MOCK_DRIVE=true`, os webhooks são simulados.
+
+### API de Webhooks
+
+#### Endpoint Principal
+
+```
+POST /webhooks/google-drive
+```
+
+Este endpoint recebe notificações do Google Drive. **Não deve ser chamado manualmente** - apenas pelo Google Drive.
+
+**Headers Esperados:**
+- `X-Goog-Channel-ID`: ID único do canal
+- `X-Goog-Resource-ID`: ID único do recurso
+- `X-Goog-Resource-State`: Estado da notificação (`sync`, `add`, `update`, `remove`, `trash`, `untrash`, `change`)
+- `X-Goog-Resource-URI`: URI do recurso modificado
+- `X-Goog-Message-Number`: Número sequencial da mensagem
+- `X-Goog-Channel-Token`: Token de verificação (se configurado)
+
+**Estados de Notificação:**
+- `sync` - Notificação inicial quando canal é criado (handshake)
+- `add` - Novo arquivo/pasta criado
+- `remove` - Arquivo/pasta removido
+- `update` - Arquivo/pasta modificado
+- `change` - Mudança genérica
+- `trash` - Movido para lixeira
+- `untrash` - Restaurado da lixeira
+
+**Exemplo de Resposta:**
+```json
+{
+  "status": "ok",
+  "message": "notification received and logged",
+  "resource_state": "update",
+  "channel_id": "123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+#### Status dos Canais
+
+```
+GET /webhooks/google-drive/status
+```
+
+Retorna informações sobre todos os canais ativos de webhook.
+
+**Resposta:**
+```json
+{
+  "active_channels": 2,
+  "channels": [
+    {
+      "channel_id": "123e4567-e89b-12d3-a456-426614174000",
+      "watched_resource": "folder-abc-123",
+      "resource_type": "folder",
+      "expires_at": "2025-12-07T15:23:55.000Z",
+      "created_at": "2025-12-06T15:23:55.000Z"
+    }
+  ]
+}
+```
+
+### Gerenciamento de Canais
+
+Use o `WebhookService` para gerenciar canais de notificação:
+
+```python
+from services.webhook_service import WebhookService
+from database import SessionLocal
+
+db = SessionLocal()
+webhook_service = WebhookService(db)
+
+# Registrar novo canal para uma pasta
+channel = webhook_service.register_webhook_channel(
+    folder_id="1234567890abcdef",  # ID da pasta no Google Drive
+    resource_type="folder",
+    ttl_hours=24  # Tempo de vida (máximo 24h)
+)
+
+# Renovar canal antes da expiração
+new_channel = webhook_service.renew_webhook_channel(
+    channel_id=channel.channel_id,
+    ttl_hours=24
+)
+
+# Parar canal
+webhook_service.stop_webhook_channel(channel_id=channel.channel_id)
+
+# Listar canais ativos
+active_channels = webhook_service.get_active_channels()
+
+# Limpar canais expirados
+count = webhook_service.cleanup_expired_channels()
+```
+
+### Modelos de Dados
+
+#### DriveWebhookChannel
+
+Armazena informações sobre canais de notificação registrados.
+
+```python
+{
+  "id": 1,
+  "channel_id": "123e4567-e89b-12d3-a456-426614174000",
+  "resource_id": "xyz-resource-789",
+  "resource_type": "folder",
+  "watched_resource_id": "folder-abc-123",
+  "expires_at": "2025-12-07T15:23:55.000Z",
+  "active": true,
+  "created_at": "2025-12-06T15:23:55.000Z"
+}
+```
+
+#### DriveChangeLog
+
+Registra todas as notificações recebidas (audit log).
+
+```python
+{
+  "id": 1,
+  "channel_id": "123e4567-e89b-12d3-a456-426614174000",
+  "resource_id": "xyz-resource-789",
+  "resource_state": "update",
+  "changed_resource_id": "file-def-456",
+  "event_type": "content,parents",
+  "received_at": "2025-12-06T15:24:00.000Z",
+  "raw_headers": "{...}"  // JSON com todos os headers
+}
+```
+
+### Ciclo de Vida dos Canais
+
+1. **Registro**: Canal é criado com TTL de até 24 horas
+2. **Sync**: Google envia notificação `sync` inicial (handshake)
+3. **Notificações**: Google envia notificações de mudanças enquanto ativo
+4. **Renovação**: Antes da expiração, canal deve ser renovado
+5. **Expiração**: Canais expirados são automaticamente desativados
+6. **Limpeza**: Use `cleanup_expired_channels()` periodicamente
+
+**Importante:** Canais do Google Drive expiram em até 24 horas. É recomendado configurar um job periódico (ex: cron) para renovar canais antes da expiração.
+
+### Exemplo de Fluxo Completo
+
+```python
+# 1. Criar estrutura de pastas para uma empresa
+from services.hierarchy_service import HierarchyService
+
+hierarchy = HierarchyService(db)
+company_folder = hierarchy.ensure_company_structure("company-123")
+
+# 2. Registrar webhook para monitorar a pasta da empresa
+webhook_service = WebhookService(db)
+channel = webhook_service.register_webhook_channel(
+    folder_id=company_folder.folder_id,
+    ttl_hours=24
+)
+
+# 3. Google Drive envia notificações quando arquivos são modificados
+# → POST /webhooks/google-drive
+
+# 4. Consultar log de mudanças
+logs = db.query(DriveChangeLog).filter(
+    DriveChangeLog.channel_id == channel.channel_id
+).all()
+
+for log in logs:
+    print(f"{log.resource_state}: {log.changed_resource_id}")
+```
+
+### Testes
+
+Execute os testes de webhook:
+
+```bash
+pytest tests/test_webhooks.py -v
+```
+
+**Cobertura de Testes:**
+- ✅ Validação de headers obrigatórios
+- ✅ Notificações sync vs change
+- ✅ Validação de token secreto
+- ✅ Registro e renovação de canais
+- ✅ Limpeza de canais expirados
+- ✅ Mapeamento para entidades internas
+
+### Modo Mock (Desenvolvimento)
+
+Com `USE_MOCK_DRIVE=true`, os webhooks funcionam em modo simulado:
+- Canais são registrados no banco, mas não no Google
+- Notificações podem ser enviadas manualmente via HTTP
+- Útil para testes locais sem configurar Google Cloud
+
+**Exemplo de teste manual:**
+```bash
+curl -X POST http://localhost:8000/webhooks/google-drive \
+  -H "X-Goog-Channel-ID: test-channel" \
+  -H "X-Goog-Resource-ID: test-resource" \
+  -H "X-Goog-Resource-State: update" \
+  -H "X-Goog-Channel-Token: test-secret-123"
+```
+
+### Limitações e Considerações
+
+- **Máximo de 24 horas**: Canais expiram após 24h e devem ser renovados
+- **Limite de canais**: Google limita número de canais por projeto (consulte quotas)
+- **Notificações agregadas**: Google pode agregar múltiplas mudanças em uma notificação
+- **Ordem não garantida**: Notificações podem chegar fora de ordem
+- **Reenvios**: Google pode reenviar notificações em caso de falha
+
+### Troubleshooting
+
+**Webhook não recebe notificações:**
+1. Verifique se `WEBHOOK_BASE_URL` está configurado corretamente
+2. Certifique-se que o domínio está verificado no Google Cloud
+3. Confirme que o canal está ativo: `GET /webhooks/google-drive/status`
+4. Verifique logs da aplicação para erros
+
+**Token inválido:**
+- Certifique-se que `WEBHOOK_SECRET` está configurado igual no código e no registro do canal
+
+**Canais expiram frequentemente:**
+- Configure um job cron para executar `cleanup_expired_channels()` e renovar canais automaticamente
 
 ## 📝 Próximos Passos
 
 ### Features Planejadas
 
 #### Alta Prioridade
-- [ ] **Webhooks do Google Drive** - Notificações em tempo real de mudanças
+- [x] **Webhooks do Google Drive** - Notificações em tempo real de mudanças ✅
 - [ ] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive
-- [ ] **Audit Log** - Registro de todas as operações (quem, quando, o quê)
 - [ ] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover
 - [ ] **Busca Avançada** - Buscar arquivos por nome, conteúdo, data, etc.
 

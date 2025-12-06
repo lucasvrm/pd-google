@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import drive
+from routers import drive, webhooks
 from database import engine
 import models
 
@@ -23,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(drive.router)
+app.include_router(webhooks.router)
 
 @app.get("/")
 def read_root():

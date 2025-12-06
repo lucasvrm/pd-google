@@ -4,6 +4,25 @@ from sqlalchemy.orm import relationship
 from database import Base
 
 
+class DriveWebhookChannel(Base):
+    """
+    Stores Google Drive webhook notification channels.
+    These channels are registered with Google Drive to receive real-time notifications
+    about changes to files and folders.
+    """
+    __tablename__ = "drive_webhook_channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(String, unique=True, index=True)  # Unique channel identifier
+    resource_id = Column(String, index=True)  # Resource ID returned by Google
+    resource_type = Column(String, default="folder")  # "folder" or "file"
+    watched_resource_id = Column(String, index=True)  # ID of the Drive folder/file being watched
+    expires_at = Column(DateTime(timezone=True))  # Channel expiration timestamp
+    active = Column(Boolean, default=True, index=True)  # Whether channel is active
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
 class DriveFolder(Base):
     __tablename__ = "google_drive_folders"
 
@@ -88,3 +107,20 @@ class Deal(Base):
 
     # Relationship
     company = relationship("Company")
+
+
+class DriveChangeLog(Base):
+    """
+    Audit log for Drive changes received via webhooks.
+    Records all change notifications received from Google Drive.
+    """
+    __tablename__ = "drive_change_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(String, index=True)  # Channel that received the notification
+    resource_id = Column(String, index=True)  # Resource ID from Google
+    resource_state = Column(String)  # "sync", "add", "remove", "update", "trash", "untrash", "change"
+    changed_resource_id = Column(String, index=True, nullable=True)  # Drive file/folder ID that changed
+    event_type = Column(String, nullable=True)  # Additional event information
+    received_at = Column(DateTime(timezone=True), server_default=func.now())
+    raw_headers = Column(Text, nullable=True)  # JSON string of all webhook headers for debugging
