@@ -31,6 +31,10 @@ class DriveFolder(Base):
     entity_type = Column(String, index=True) # company, lead, deal, contact
     folder_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Soft delete fields
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by = Column(String, nullable=True)  # user_id who deleted
+    delete_reason = Column(String, nullable=True)
 
 
 class DriveFile(Base):
@@ -43,6 +47,10 @@ class DriveFile(Base):
     mime_type = Column(String)
     size = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Soft delete fields
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by = Column(String, nullable=True)  # user_id who deleted
+    delete_reason = Column(String, nullable=True)
 
 # Template Structures
 class DriveStructureTemplate(Base):

@@ -132,10 +132,23 @@ Deal - [Nome do Deal]/
 ### 3. Operações de Drive
 
 - ✅ **GET** `/drive/{entity_type}/{entity_id}` - Listar arquivos e pastas
+  - Suporta `include_deleted=true` para incluir itens marcados como deletados
 - ✅ **POST** `/drive/{entity_type}/{entity_id}/folder` - Criar subpasta
 - ✅ **POST** `/drive/{entity_type}/{entity_id}/upload` - Upload de arquivo
+- ✅ **DELETE** `/drive/{entity_type}/{entity_id}/files/{file_id}` - Soft delete de arquivo
+- ✅ **DELETE** `/drive/{entity_type}/{entity_id}/folders/{folder_id}` - Soft delete de pasta
 
-### 4. Sistema de Permissões
+### 4. Soft Delete
+
+- ✅ Arquivos e pastas podem ser marcados como deletados sem remoção física do Drive
+- ✅ Campos de auditoria: `deleted_at`, `deleted_by`, `delete_reason`
+- ✅ Itens deletados não aparecem em listagens por padrão
+- ✅ Parâmetro `include_deleted=true` permite visualizar itens deletados (uso administrativo)
+- ✅ Integração com cache (invalidação automática após soft delete)
+- ✅ Registro em audit log (DriveChangeLog) de todas as operações de soft delete
+- ✅ Requer permissão de escrita (writer ou owner)
+
+### 5. Sistema de Permissões
 
 - ✅ Mapeamento de roles da aplicação para permissões do Drive:
   - `admin`, `superadmin` → **owner** (controle total)
@@ -400,6 +413,71 @@ curl -X POST "http://localhost:8000/drive/lead/lead-001/upload" \
   -F "file=@/path/to/documento.pdf"
 ```
 
+#### 4. Soft Delete de Arquivo
+
+```bash
+DELETE /drive/{entity_type}/{entity_id}/files/{file_id}
+
+Headers:
+  x-user-role: admin|manager (requer permissão de escrita)
+  x-user-id: user-uuid
+
+Query Parameters:
+  reason: (opcional) Motivo da exclusão
+
+Resposta:
+{
+  "status": "deleted",
+  "file_id": "file-id",
+  "deleted_at": "2025-12-06T16:00:00.000000+00:00",
+  "deleted_by": "user-uuid"
+}
+```
+
+**Exemplo:**
+```bash
+curl -X DELETE "http://localhost:8000/drive/lead/lead-001/files/file-abc123?reason=Arquivo%20duplicado" \
+  -H "x-user-role: admin" \
+  -H "x-user-id: user-123"
+```
+
+#### 5. Soft Delete de Pasta
+
+```bash
+DELETE /drive/{entity_type}/{entity_id}/folders/{folder_id}
+
+Headers:
+  x-user-role: admin|manager (requer permissão de escrita)
+  x-user-id: user-uuid
+
+Query Parameters:
+  reason: (opcional) Motivo da exclusão
+
+Resposta:
+{
+  "status": "deleted",
+  "folder_id": "folder-id",
+  "deleted_at": "2025-12-06T16:00:00.000000+00:00",
+  "deleted_by": "user-uuid"
+}
+```
+
+**Exemplo:**
+```bash
+curl -X DELETE "http://localhost:8000/drive/company/comp-001/folders/folder-xyz789?reason=Reorganizacao" \
+  -H "x-user-role: admin" \
+  -H "x-user-id: user-123"
+```
+
+#### 6. Listar com Itens Deletados
+
+Para incluir itens marcados como deletados na listagem (uso administrativo):
+
+```bash
+curl -X GET "http://localhost:8000/drive/company/comp-001?include_deleted=true" \
+  -H "x-user-role: admin"
+```
+
 ## 🗄️ Modelos de Dados
 
 ### DriveFolder
@@ -411,7 +489,11 @@ Mapeia entidades do CRM para pastas no Google Drive.
   "entity_id": str,        # UUID da entidade (company, lead, deal)
   "entity_type": str,      # "company" | "lead" | "deal" | "system_root"
   "folder_id": str,        # ID da pasta no Google Drive
-  "created_at": datetime
+  "created_at": datetime,
+  # Campos de soft delete
+  "deleted_at": datetime,  # Timestamp da exclusão (null se não deletado)
+  "deleted_by": str,       # User ID que realizou a exclusão
+  "delete_reason": str     # Motivo da exclusão (opcional)
 }
 ```
 
@@ -426,7 +508,11 @@ Metadados de arquivos armazenados no Drive.
   "name": str,
   "mime_type": str,
   "size": int,
-  "created_at": datetime
+  "created_at": datetime,
+  # Campos de soft delete
+  "deleted_at": datetime,  # Timestamp da exclusão (null se não deletado)
+  "deleted_by": str,       # User ID que realizou a exclusão
+  "delete_reason": str     # Motivo da exclusão (opcional)
 }
 ```
 
@@ -1111,7 +1197,7 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 #### Alta Prioridade
 - [x] **Webhooks do Google Drive** - Notificações em tempo real de mudanças ✅
 - [x] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive ✅
-- [ ] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover
+- [x] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover ✅
 - [ ] **Busca Avançada** - Buscar arquivos por nome, conteúdo, data, etc.
 
 #### Média Prioridade
