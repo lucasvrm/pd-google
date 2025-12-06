@@ -7,6 +7,8 @@ from database import Base
 from main import app
 import models
 import os
+from unittest.mock import patch
+from services.google_drive_mock import GoogleDriveService
 from routers.drive import get_db as original_get_db
 from services.permission_service import PermissionService
 
@@ -77,7 +79,13 @@ def teardown_module(module):
 # Create client AFTER module setup - use fixture
 @pytest.fixture(scope="module")
 def client():
-    return TestClient(app)
+    # Patch the drive service to use Mock for these tests
+    # We also patch USE_MOCK_DRIVE in hierarchy service so it creates the mock service
+    mock_service = GoogleDriveService()
+
+    with patch("routers.drive.drive_service", mock_service), \
+         patch("services.hierarchy_service.config.USE_MOCK_DRIVE", True):
+        yield TestClient(app)
 
 
 class TestPermissionMapping:
@@ -203,21 +211,21 @@ class TestPermissionEndpoints:
 
     def test_writer_can_access_get_endpoint(self, client):
         """Test that writer role (manager) can access GET endpoint"""
-        response = client.get("/drive/lead/lead-perm-1", headers={"x-user-role": "manager"})
+        response = client.get("/drive/lead/lead-perm-1", headers={"x-user-id": "u1", "x-user-role": "manager"})
         assert response.status_code == 200
         data = response.json()
         assert data["permission"] == "writer"
 
     def test_reader_can_access_get_endpoint(self, client):
         """Test that reader role (client) can access GET endpoint"""
-        response = client.get("/drive/lead/lead-perm-1", headers={"x-user-role": "client"})
+        response = client.get("/drive/lead/lead-perm-1", headers={"x-user-id": "u2", "x-user-role": "client"})
         assert response.status_code == 200
         data = response.json()
         assert data["permission"] == "reader"
 
     def test_owner_can_access_get_endpoint(self, client):
         """Test that owner role (admin) can access GET endpoint"""
-        response = client.get("/drive/deal/deal-perm-1", headers={"x-user-role": "admin"})
+        response = client.get("/drive/deal/deal-perm-1", headers={"x-user-id": "u3", "x-user-role": "admin"})
         assert response.status_code == 200
         data = response.json()
         assert data["permission"] == "owner"
@@ -225,13 +233,13 @@ class TestPermissionEndpoints:
     def test_writer_can_create_folder(self, client):
         """Test that writer role can create folders"""
         # First, initialize structure with GET
-        client.get("/drive/lead/lead-perm-1", headers={"x-user-role": "manager"})
+        client.get("/drive/lead/lead-perm-1", headers={"x-user-id": "u1", "x-user-role": "manager"})
         
         # Then create folder
         response = client.post(
             "/drive/lead/lead-perm-1/folder",
             json={"name": "Writer Test Folder"},
-            headers={"x-user-role": "manager"}
+            headers={"x-user-id": "u1", "x-user-role": "manager"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -240,13 +248,13 @@ class TestPermissionEndpoints:
     def test_owner_can_create_folder(self, client):
         """Test that owner role can create folders"""
         # First, initialize structure with GET
-        client.get("/drive/deal/deal-perm-1", headers={"x-user-role": "admin"})
+        client.get("/drive/deal/deal-perm-1", headers={"x-user-id": "u3", "x-user-role": "admin"})
         
         # Then create folder
         response = client.post(
             "/drive/deal/deal-perm-1/folder",
             json={"name": "Owner Test Folder"},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-id": "u3", "x-user-role": "admin"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -255,13 +263,13 @@ class TestPermissionEndpoints:
     def test_reader_blocked_from_create_folder(self, client):
         """Test that reader role is blocked from creating folders"""
         # First, initialize structure with GET using a writer role
-        client.get("/drive/lead/lead-perm-1", headers={"x-user-role": "admin"})
+        client.get("/drive/lead/lead-perm-1", headers={"x-user-id": "u3", "x-user-role": "admin"})
         
         # Then try to create folder as reader
         response = client.post(
             "/drive/lead/lead-perm-1/folder",
             json={"name": "Reader Blocked Folder"},
-            headers={"x-user-role": "client"}
+            headers={"x-user-id": "u2", "x-user-role": "client"}
         )
         assert response.status_code == 403
         assert "does not have permission" in response.json()["detail"]
@@ -269,13 +277,13 @@ class TestPermissionEndpoints:
     def test_analyst_can_create_folder(self, client):
         """Test that analyst role (writer) can create folders"""
         # First, initialize structure with GET
-        client.get("/drive/deal/deal-perm-1", headers={"x-user-role": "analyst"})
+        client.get("/drive/deal/deal-perm-1", headers={"x-user-id": "u4", "x-user-role": "analyst"})
         
         # Then create folder
         response = client.post(
             "/drive/deal/deal-perm-1/folder",
             json={"name": "Analyst Test Folder"},
-            headers={"x-user-role": "analyst"}
+            headers={"x-user-id": "u4", "x-user-role": "analyst"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -284,13 +292,13 @@ class TestPermissionEndpoints:
     def test_new_business_can_create_folder(self, client):
         """Test that new_business role (writer) can create folders"""
         # First, initialize structure with GET
-        client.get("/drive/lead/lead-perm-1", headers={"x-user-role": "new_business"})
+        client.get("/drive/lead/lead-perm-1", headers={"x-user-id": "u5", "x-user-role": "new_business"})
         
         # Then create folder
         response = client.post(
             "/drive/lead/lead-perm-1/folder",
             json={"name": "New Business Test Folder"},
-            headers={"x-user-role": "new_business"}
+            headers={"x-user-id": "u5", "x-user-role": "new_business"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -299,13 +307,13 @@ class TestPermissionEndpoints:
     def test_customer_blocked_from_create_folder(self, client):
         """Test that customer role (reader) is blocked from creating folders"""
         # First, initialize structure with GET using a writer role
-        client.get("/drive/deal/deal-perm-1", headers={"x-user-role": "admin"})
+        client.get("/drive/deal/deal-perm-1", headers={"x-user-id": "u3", "x-user-role": "admin"})
         
         # Then try to create folder as customer
         response = client.post(
             "/drive/deal/deal-perm-1/folder",
             json={"name": "Customer Blocked Folder"},
-            headers={"x-user-role": "customer"}
+            headers={"x-user-id": "u6", "x-user-role": "customer"}
         )
         assert response.status_code == 403
         assert "does not have permission" in response.json()["detail"]
