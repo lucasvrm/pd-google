@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from config import config
 from datetime import datetime, timezone
+import json
 
 router = APIRouter()
 
@@ -308,13 +309,18 @@ def soft_delete_file(
     db.commit()
 
     # 6. Log to audit log (DriveChangeLog)
+    audit_metadata = {
+        "user_id": user_id,
+        "user_role": user_role,
+        "reason": reason
+    }
     audit_entry = models.DriveChangeLog(
         channel_id="soft_delete",
         resource_id=file_id,
         resource_state="soft_delete",
         changed_resource_id=file_id,
         event_type="file_soft_delete",
-        raw_headers=f'{{"user_id": "{user_id}", "user_role": "{user_role}", "reason": "{reason if reason else "None"}"}}',
+        raw_headers=json.dumps(audit_metadata),
     )
     db.add(audit_entry)
     db.commit()
@@ -390,13 +396,19 @@ def soft_delete_folder(
     # For now, we'll return success if folder isn't tracked but exists in Drive
     if not folder_record:
         # Log the soft delete attempt even if folder isn't in our DB
+        audit_metadata = {
+            "user_id": user_id,
+            "user_role": user_role,
+            "reason": reason,
+            "note": "Folder not tracked in database"
+        }
         audit_entry = models.DriveChangeLog(
             channel_id="soft_delete",
             resource_id=folder_id,
             resource_state="soft_delete",
             changed_resource_id=folder_id,
             event_type="folder_soft_delete_untracked",
-            raw_headers=f'{{"user_id": "{user_id}", "user_role": "{user_role}", "reason": "{reason if reason else "None"}", "note": "Folder not tracked in database"}}',
+            raw_headers=json.dumps(audit_metadata),
         )
         db.add(audit_entry)
         db.commit()
@@ -424,13 +436,18 @@ def soft_delete_folder(
     db.commit()
 
     # 7. Log to audit log (DriveChangeLog)
+    audit_metadata = {
+        "user_id": user_id,
+        "user_role": user_role,
+        "reason": reason
+    }
     audit_entry = models.DriveChangeLog(
         channel_id="soft_delete",
         resource_id=folder_id,
         resource_state="soft_delete",
         changed_resource_id=folder_id,
         event_type="folder_soft_delete",
-        raw_headers=f'{{"user_id": "{user_id}", "user_role": "{user_role}", "reason": "{reason if reason else "None"}"}}',
+        raw_headers=json.dumps(audit_metadata),
     )
     db.add(audit_entry)
     db.commit()
