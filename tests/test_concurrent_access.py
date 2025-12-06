@@ -20,7 +20,6 @@ import models
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
 
 
 # Setup Test DB
@@ -276,14 +275,12 @@ class TestConcurrentAccess:
         num_read_requests = 10
         results = []
         
-        # Mix of operations (in this case, all reads, but with slight delays)
+        # Mix of operations (in this case, all reads)
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             
             for i in range(num_read_requests):
                 futures.append(executor.submit(make_request, entity_type, entity_id, i))
-                # Small random delay to stagger requests slightly
-                time.sleep(0.01)
             
             for future in as_completed(futures):
                 results.append(future.result())

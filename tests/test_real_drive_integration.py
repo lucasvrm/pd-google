@@ -124,22 +124,17 @@ class TestRealDriveIntegration:
 
 # Optional: Add a test that runs even without credentials to verify graceful degradation
 @pytest.mark.unit
-def test_real_service_without_credentials():
+def test_real_service_without_credentials(monkeypatch):
     """Test that RealDriveService handles missing credentials gracefully."""
-    # Temporarily clear the credentials
-    original_creds = config.GOOGLE_SERVICE_ACCOUNT_JSON
-    config.GOOGLE_SERVICE_ACCOUNT_JSON = None
+    # Temporarily clear the credentials using monkeypatch
+    monkeypatch.setattr(config, 'GOOGLE_SERVICE_ACCOUNT_JSON', None)
     
-    try:
-        service = GoogleDriveRealService()
-        # Service should initialize but service attribute should be None
-        assert service.service is None, "Service should be None without credentials"
-        
-        # Attempting to use the service should raise an appropriate error
-        with pytest.raises(Exception) as exc_info:
-            service.create_folder("Test")
-        
-        assert "configuration error" in str(exc_info.value).lower() or "missing" in str(exc_info.value).lower()
-    finally:
-        # Restore original credentials
-        config.GOOGLE_SERVICE_ACCOUNT_JSON = original_creds
+    service = GoogleDriveRealService()
+    # Service should initialize but service attribute should be None
+    assert service.service is None, "Service should be None without credentials"
+    
+    # Attempting to use the service should raise an appropriate error
+    with pytest.raises(Exception) as exc_info:
+        service.create_folder("Test")
+    
+    assert "configuration error" in str(exc_info.value).lower() or "missing" in str(exc_info.value).lower()
