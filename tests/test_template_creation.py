@@ -101,7 +101,7 @@ def test_create_simple_template_structure():
     ).first()
     assert saved_template is not None
     assert saved_template.entity_type == "company"
-    assert saved_template.active == True
+    assert saved_template.active is True
 
     # Verify nodes were created
     nodes = db.query(models.DriveStructureNode).filter_by(
