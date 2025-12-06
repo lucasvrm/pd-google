@@ -25,7 +25,7 @@ def get_db():
 
 
 @router.post("/webhooks/google-drive")
-async def receive_google_webhook(
+def receive_google_webhook(
     request: Request,
     db: Session = Depends(get_db),
     x_goog_channel_id: Optional[str] = Header(None, alias="X-Goog-Channel-ID"),
@@ -58,7 +58,7 @@ async def receive_google_webhook(
     ).first()
 
     if drive_channel:
-        return await handle_drive_webhook(db, drive_channel, x_goog_resource_state, x_goog_channel_token, x_goog_resource_uri, x_goog_changed)
+        return handle_drive_webhook(db, drive_channel, x_goog_resource_state, x_goog_channel_token, x_goog_resource_uri, x_goog_changed)
 
     # 2. Check if it is a Calendar Channel
     calendar_channel = db.query(models.CalendarSyncState).filter(
@@ -66,14 +66,14 @@ async def receive_google_webhook(
     ).first()
 
     if calendar_channel:
-        return await handle_calendar_webhook(db, calendar_channel, x_goog_resource_state, x_goog_channel_token)
+        return handle_calendar_webhook(db, calendar_channel, x_goog_resource_state, x_goog_channel_token)
 
     print(f"Unknown channel: {x_goog_channel_id}")
     # Return 200 to stop retries
     return {"status": "ignored", "reason": "unknown_channel"}
 
 
-async def handle_drive_webhook(db, channel, state, token, uri, changed):
+def handle_drive_webhook(db, channel, state, token, uri, changed):
     # (Preserve existing logic for Drive)
     if not channel.active:
         return {"status": "ignored", "reason": "inactive_channel"}
@@ -111,7 +111,7 @@ async def handle_drive_webhook(db, channel, state, token, uri, changed):
     return {"status": "ok", "type": "drive"}
 
 
-async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState, state: str, token: str):
+def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState, state: str, token: str):
     """
     Process Calendar Webhook
     """

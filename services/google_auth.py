@@ -9,8 +9,14 @@ class GoogleAuthService:
     Centralized service for handling Google Service Account authentication.
     """
 
-    def __init__(self, scopes: List[str]):
+    def __init__(self, scopes: List[str], subject: Optional[str] = None):
+        """
+        Args:
+            scopes: List of OAuth scopes.
+            subject: Email of the user to impersonate (requires Domain-Wide Delegation).
+        """
         self.scopes = scopes
+        self.subject = subject
         self.creds = None
         self._authenticate()
 
@@ -23,11 +29,18 @@ class GoogleAuthService:
             # Handle if the env var is a file path or the JSON content string
             if config.GOOGLE_SERVICE_ACCOUNT_JSON.strip().startswith("{"):
                 info = json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
-                self.creds = service_account.Credentials.from_service_account_info(info, scopes=self.scopes)
+                creds = service_account.Credentials.from_service_account_info(info, scopes=self.scopes)
             else:
-                self.creds = service_account.Credentials.from_service_account_file(
+                creds = service_account.Credentials.from_service_account_file(
                     config.GOOGLE_SERVICE_ACCOUNT_JSON, scopes=self.scopes
                 )
+
+            # If subject is provided, we perform impersonation
+            if self.subject:
+                creds = creds.with_subject(self.subject)
+
+            self.creds = creds
+
         except Exception as e:
             print(f"Authentication failed: {e}")
             self.creds = None

@@ -186,3 +186,39 @@ class CalendarEvent(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Email(Base):
+    __tablename__ = "emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_message_id = Column(String, unique=True, index=True, nullable=False)
+    thread_id = Column(String, index=True)
+
+    # Associações
+    user_email = Column(String, index=True)
+    entity_id = Column(String, index=True, nullable=True)
+    entity_type = Column(String, index=True, nullable=True)
+
+    # Conteúdo
+    subject = Column(String)
+    from_address = Column(String)
+    to_address = Column(Text)
+    snippet = Column(Text)
+    body_html = Column(Text)
+
+    internal_date = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailAttachment(Base):
+    __tablename__ = "email_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_id = Column(Integer, ForeignKey("emails.id"))
+    drive_file_id = Column(Integer, ForeignKey("drive_files.id"), nullable=True)
+    file_name = Column(String)
+    mime_type = Column(String)
+
+    email = relationship("Email")
+    drive_file = relationship("DriveFile")
