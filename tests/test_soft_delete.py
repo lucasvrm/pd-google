@@ -10,6 +10,8 @@ from database import Base
 from main import app
 import models
 import os
+from unittest.mock import patch
+from services.google_drive_mock import GoogleDriveService
 from routers.drive import get_db as original_get_db
 
 # Setup Test DB
@@ -27,7 +29,7 @@ def override_get_db():
 MOCK_JSON = "mock_drive_db.json"
 
 def setup_module(module):
-    # Set USE_MOCK_DRIVE to true for tests
+    # Set USE_MOCK_DRIVE to true for tests (though patching config is safer)
     os.environ["USE_MOCK_DRIVE"] = "true"
     
     # Clean up JSON Mock
@@ -73,7 +75,11 @@ def teardown_module(module):
 # Create client AFTER module setup - use fixture
 @pytest.fixture(scope="module")
 def client():
-    return TestClient(app)
+    mock_service = GoogleDriveService()
+    # Patch routers.drive.drive_service AND services.hierarchy_service.config.USE_MOCK_DRIVE
+    with patch("routers.drive.drive_service", mock_service), \
+         patch("services.hierarchy_service.config.USE_MOCK_DRIVE", True):
+        yield TestClient(app)
 
 
 class TestFileSoftDelete:
@@ -121,7 +127,7 @@ class TestFileSoftDelete:
         file_id = response.json()["id"]
         
         # Verify file is in listing before deletion
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin"})
+        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
         files_before = response.json()["files"]
         file_ids_before = [f["id"] for f in files_before]
         assert file_id in file_ids_before
@@ -133,7 +139,7 @@ class TestFileSoftDelete:
         )
         
         # Verify file is NOT in listing after deletion
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin"})
+        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
         files_after = response.json()["files"]
         file_ids_after = [f["id"] for f in files_after]
         assert file_id not in file_ids_after
@@ -158,12 +164,12 @@ class TestFileSoftDelete:
         )
         
         # Verify file is NOT in default listing
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin"})
+        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-3"})
         file_ids = [f["id"] for f in response.json()["files"]]
         assert file_id not in file_ids
         
         # Verify file IS in listing with include_deleted=true
-        response = client.get("/drive/lead/lead-soft-1?include_deleted=true", headers={"x-user-role": "admin"})
+        response = client.get("/drive/lead/lead-soft-1?include_deleted=true", headers={"x-user-role": "admin", "x-user-id": "user-3"})
         file_ids = [f["id"] for f in response.json()["files"]]
         assert file_id in file_ids
 

@@ -8,13 +8,16 @@ from services.permission_service import PermissionService
 from services.hierarchy_service import HierarchyService
 from services.search_service import SearchService
 from cache import cache_service
+from auth.dependencies import get_current_user
+from auth.jwt import UserContext
 import models
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel
 from config import config
 from datetime import datetime, timezone
 import json
 import traceback
+import math
 
 router = APIRouter()
 
@@ -26,11 +29,28 @@ else:
     print("Using REAL Drive Service")
     drive_service = GoogleDriveRealService()
 
+# --- Pydantic Schemas ---
+
+class DriveItem(BaseModel):
+    id: str
+    name: str
+    mimeType: str
+    parents: Optional[List[str]] = None
+    size: Optional[int] = None
+    createdTime: Optional[Union[str, datetime]] = None
+    webViewLink: Optional[str] = None
+    type: Literal["file", "folder"]
 
 class DriveResponse(BaseModel):
-    files: List[Dict[str, Any]]
+    files: List[DriveItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
     permission: str
 
+class CreateFolderRequest(BaseModel):
+    name: str
 
 def get_db():
     db = SessionLocal()
@@ -40,18 +60,15 @@ def get_db():
         db.close()
 
 
-class CreateFolderRequest(BaseModel):
-    name: str
-
-
 @router.get("/drive/{entity_type}/{entity_id}", response_model=DriveResponse)
 def get_entity_drive(
     entity_type: str,
     entity_id: str,
     include_deleted: bool = Query(default=False, description="Include soft-deleted items in the response"),
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(default=50, ge=1, le=200, description="Items per page"),
     db: Session = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="x-user-id"),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     try:
         # 0. Validate Entity Type
@@ -77,6 +94,7 @@ def get_entity_drive(
         root_id = entity_folder.folder_id
 
         # 2. List contents of this folder
+        # Note: This loads all files into memory. Pagination should ideally move to service layer.
         items = drive_service.list_files(root_id)
 
         # 3. Filter out soft-deleted items unless include_deleted=True
@@ -101,19 +119,47 @@ def get_entity_drive(
 
         # 4. Determine permissions
         perm_service = PermissionService(db)
+        permission = perm_service.get_drive_permission_from_app_role(
+            current_user.role, entity_type
+        )
 
-        if user_role:
-            # Usa o papel vindo do app (ex: admin, analyst, new_business, client)
-            permission = perm_service.get_drive_permission_from_app_role(
-                user_role, entity_type
-            )
-        else:
-            # Fallback para o comportamento antigo (mock) se nenhum papel for enviado
-            permission = perm_service.mock_check_permission(
-                user_id or "anonymous", entity_type
-            )
+        # 5. Transform to DriveItem schema
+        drive_items = []
+        for item in items:
+            # Determine type
+            mime = item.get("mimeType", "")
+            item_type = "folder" if mime == "application/vnd.google-apps.folder" else "file"
 
-        return {"files": items, "permission": permission}
+            drive_items.append(DriveItem(
+                id=item["id"],
+                name=item["name"],
+                mimeType=mime,
+                parents=item.get("parents"),
+                size=item.get("size"),
+                createdTime=item.get("createdTime"),
+                webViewLink=item.get("webViewLink"),
+                type=item_type
+            ))
+
+        # 6. Pagination
+        total = len(drive_items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated_items = drive_items[start:end]
+        total_pages = math.ceil(total / page_size) if page_size > 0 else 1
+
+        # Log operation
+        # logger.info(...) can be added here if logging is configured globally or passed as dep
+
+        return DriveResponse(
+            files=paginated_items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            permission=permission
+        )
+
     except HTTPException:
         # Re-raise HTTPExceptions without change
         raise
@@ -131,7 +177,7 @@ def create_subfolder(
     entity_id: str,
     request: CreateFolderRequest,
     db: Session = Depends(get_db),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -139,13 +185,9 @@ def create_subfolder(
 
     # 1. Check permission
     perm_service = PermissionService(db)
-    if user_role:
-        permission = perm_service.get_drive_permission_from_app_role(
-            user_role, entity_type
-        )
-    else:
-        # Fallback: mantém compatível com o antigo comportamento (writer)
-        permission = perm_service.mock_check_permission("anonymous", entity_type)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
 
     if permission == "reader":
         raise HTTPException(
@@ -176,6 +218,27 @@ def create_subfolder(
     new_folder = drive_service.create_folder(
         request.name, parent_id=entity_folder.folder_id
     )
+
+    # 4. Log Audit
+    audit_metadata = {
+        "user_id": current_user.id,
+        "user_role": current_user.role,
+        "action": "create_subfolder",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "folder_name": request.name
+    }
+    audit_entry = models.DriveChangeLog(
+        channel_id="api_action",
+        resource_id=new_folder.get("id"),
+        resource_state="created",
+        changed_resource_id=new_folder.get("id"),
+        event_type="folder_create",
+        raw_headers=json.dumps(audit_metadata),
+    )
+    db.add(audit_entry)
+    db.commit()
+
     return new_folder
 
 
@@ -185,7 +248,7 @@ async def upload_file(
     entity_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -193,12 +256,9 @@ async def upload_file(
 
     # 1. Check permission
     perm_service = PermissionService(db)
-    if user_role:
-        permission = perm_service.get_drive_permission_from_app_role(
-            user_role, entity_type
-        )
-    else:
-        permission = perm_service.mock_check_permission("anonymous", entity_type)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
 
     if permission == "reader":
         raise HTTPException(
@@ -243,6 +303,26 @@ async def upload_file(
     db.add(new_file_record)
     db.commit()
 
+    # 6. Log Audit
+    audit_metadata = {
+        "user_id": current_user.id,
+        "user_role": current_user.role,
+        "action": "upload_file",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "file_name": file.filename
+    }
+    audit_entry = models.DriveChangeLog(
+        channel_id="api_action",
+        resource_id=uploaded_file.get("id"),
+        resource_state="uploaded",
+        changed_resource_id=uploaded_file.get("id"),
+        event_type="file_upload",
+        raw_headers=json.dumps(audit_metadata),
+    )
+    db.add(audit_entry)
+    db.commit()
+
     return uploaded_file
 
 
@@ -253,8 +333,7 @@ def soft_delete_file(
     file_id: str,
     reason: Optional[str] = Query(default=None, description="Reason for deleting the file"),
     db: Session = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="x-user-id"),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     """
     Soft delete a file - marks it as deleted without removing from Google Drive.
@@ -266,10 +345,9 @@ def soft_delete_file(
 
     # 1. Check permission - only writer/owner can delete
     perm_service = PermissionService(db)
-    if user_role:
-        permission = perm_service.get_drive_permission_from_app_role(user_role, entity_type)
-    else:
-        permission = perm_service.mock_check_permission(user_id or "anonymous", entity_type)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
 
     if permission == "reader":
         raise HTTPException(
@@ -304,15 +382,15 @@ def soft_delete_file(
 
     # 5. Mark as deleted (soft delete)
     file_record.deleted_at = datetime.now(timezone.utc)
-    file_record.deleted_by = user_id
+    file_record.deleted_by = current_user.id
     file_record.delete_reason = reason
 
     db.commit()
 
     # 6. Log to audit log (DriveChangeLog)
     audit_metadata = {
-        "user_id": user_id,
-        "user_role": user_role,
+        "user_id": current_user.id,
+        "user_role": current_user.role,
         "reason": reason
     }
     audit_entry = models.DriveChangeLog(
@@ -344,8 +422,7 @@ def soft_delete_folder(
     folder_id: str,
     reason: Optional[str] = Query(default=None, description="Reason for deleting the folder"),
     db: Session = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="x-user-id"),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     """
     Soft delete a folder - marks it as deleted without removing from Google Drive.
@@ -357,10 +434,9 @@ def soft_delete_folder(
 
     # 1. Check permission - only writer/owner can delete
     perm_service = PermissionService(db)
-    if user_role:
-        permission = perm_service.get_drive_permission_from_app_role(user_role, entity_type)
-    else:
-        permission = perm_service.mock_check_permission(user_id or "anonymous", entity_type)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
 
     if permission == "reader":
         raise HTTPException(
@@ -398,8 +474,8 @@ def soft_delete_folder(
     if not folder_record:
         # Log the soft delete attempt even if folder isn't in our DB
         audit_metadata = {
-            "user_id": user_id,
-            "user_role": user_role,
+            "user_id": current_user.id,
+            "user_role": current_user.role,
             "reason": reason,
             "note": "Folder not tracked in database"
         }
@@ -421,7 +497,7 @@ def soft_delete_folder(
             "status": "deleted",
             "folder_id": folder_id,
             "deleted_at": datetime.now(timezone.utc).isoformat(),
-            "deleted_by": user_id,
+            "deleted_by": current_user.id,
             "note": "Folder was not tracked in database but soft delete was logged",
         }
 
@@ -431,15 +507,15 @@ def soft_delete_folder(
 
     # 6. Mark as deleted (soft delete)
     folder_record.deleted_at = datetime.now(timezone.utc)
-    folder_record.deleted_by = user_id
+    folder_record.deleted_by = current_user.id
     folder_record.delete_reason = reason
 
     db.commit()
 
     # 7. Log to audit log (DriveChangeLog)
     audit_metadata = {
-        "user_id": user_id,
-        "user_role": user_role,
+        "user_id": current_user.id,
+        "user_role": current_user.role,
         "reason": reason
     }
     audit_entry = models.DriveChangeLog(
@@ -476,8 +552,7 @@ def search_files_and_folders(
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=50, ge=1, le=100, description="Items per page (max 100)"),
     db: Session = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="x-user-id"),
-    user_role: str | None = Header(default=None, alias="x-user-role"),
+    current_user: UserContext = Depends(get_current_user),
 ):
     """
     Advanced search for files and folders.
@@ -504,15 +579,10 @@ def search_files_and_folders(
         
         # Check permissions - user must have at least reader access
         perm_service = PermissionService(db)
-        if user_role:
-            # Use the entity_type from filter if available, otherwise use 'company' as default
-            permission = perm_service.get_drive_permission_from_app_role(
-                user_role, entity_type or "company"
-            )
-        else:
-            permission = perm_service.mock_check_permission(
-                user_id or "anonymous", entity_type or "company"
-            )
+        # Use the entity_type from filter if available, otherwise use 'company' as default
+        permission = perm_service.get_drive_permission_from_app_role(
+            current_user.role, entity_type or "company"
+        )
         
         # Parse date filters if provided
         created_from_dt = None
@@ -552,8 +622,8 @@ def search_files_and_folders(
         
         # Log search operation to audit log
         search_metadata = {
-            "user_id": user_id,
-            "user_role": user_role,
+            "user_id": current_user.id,
+            "user_role": current_user.role,
             "permission": permission,
             "filters": {
                 "entity_type": entity_type,
@@ -580,6 +650,9 @@ def search_files_and_folders(
         db.commit()
         
         # Add permission to response
+        # Note: search results use a different structure than DriveResponse because they come from SearchService
+        # If strict adherence to DriveResponse is needed for search, we'd need to map it here too.
+        # But keeping it simple as it returns 'items' not 'files' in the service.
         return {
             **results,
             "permission": permission,
@@ -590,4 +663,3 @@ def search_files_and_folders(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
