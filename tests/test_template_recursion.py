@@ -22,13 +22,15 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
 
-client = TestClient(app)
+client = None  # Will be set in setup_module
 
 MOCK_JSON = "mock_drive_db.json"
 
 def setup_module(module):
+    # Override dependency for this module
+    app.dependency_overrides[get_db] = override_get_db
+    
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
         os.remove(MOCK_JSON)
@@ -59,8 +61,16 @@ def setup_module(module):
 
     db.commit()
     db.close()
+    
+    # Create TestClient after override is in place
+    global client
+    client = TestClient(app)
 
 def teardown_module(module):
+    # Reset overrides
+    if get_db in app.dependency_overrides:
+        del app.dependency_overrides[get_db]
+    
     if os.path.exists("./test_template.db"):
         os.remove("./test_template.db")
     if os.path.exists(MOCK_JSON):
