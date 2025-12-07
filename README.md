@@ -238,27 +238,7 @@ REDIS_CACHE_ENABLED=false
 python init_db.py
 ```
 
-### 5. Aplicar Migrações (Se Necessário)
-
-Se você está atualizando um banco de dados existente que não tem as colunas de soft delete, execute:
-
-```bash
-# Verificar se migração é necessária
-python migrations/verify_migration.py
-
-# Se necessário, aplicar migração
-python migrations/add_soft_delete_fields.py
-```
-
-> **📚 Guia Completo:** Para resolver o erro `column deleted_at does not exist`, consulte o [Guia Rápido de Migração](MIGRATION_QUICKSTART.md)
-
-**Para banco Supabase em produção:**
-- Use o Supabase SQL Editor para executar `migrations/add_soft_delete_fields.sql`
-- Ou execute o script Python com `DATABASE_URL` apontando para Supabase
-
-Veja [migrations/README.md](migrations/README.md) para documentação completa.
-
-### 6. Popular com Dados de Exemplo (Opcional)
+### 5. Popular com Dados de Exemplo (Opcional)
 
 ```bash
 python seed_db.py

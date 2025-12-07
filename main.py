@@ -22,6 +22,23 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up application...")
     
+    # Run database migrations in a separate thread to avoid blocking the event loop
+    # Migrations are imported here (not at module level) to allow graceful degradation
+    # if the migration module is unavailable or the database is not accessible
+    try:
+        from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
+        logger.info("Running database migrations...")
+        await asyncio.to_thread(migrate_add_soft_delete_fields)
+        logger.info("Database migrations completed successfully")
+    except ImportError as e:
+        logger.warning(f"Migration module not available: {e}")
+        logger.info("Skipping migrations - if this is a fresh installation, run migrations manually")
+    except Exception as e:
+        # Migration failures are not critical - columns may already exist in the database
+        # or this could be a fresh installation that hasn't been initialized yet
+        logger.warning(f"Migration execution issue: {e}")
+        logger.info("Continuing startup - this is expected if database columns already exist")
+
     try:
         scheduler_service.start()
     except Exception as e:
