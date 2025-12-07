@@ -689,3 +689,36 @@ def sync_folder_name_endpoint(
         # pois isso é uma operação secundária.
         print(f"Sync endpoint error: {e}")
         return {"status": "error", "detail": str(e)}
+
+@router.post("/drive/{entity_type}/{entity_id}/repair")
+def repair_structure_endpoint(
+    entity_type: str,
+    entity_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    """
+    Manually triggers a repair of the folder structure (Templates).
+    Useful if some folders were not created during initial setup.
+    """
+    try:
+        # Check permissions (admins or managers only? or anyone with write access?)
+        # Let's say anyone with write access to the entity.
+        perm_service = PermissionService(db)
+        permission = perm_service.get_drive_permission_from_app_role(
+            current_user.role, entity_type
+        )
+        if permission == "reader":
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+        hierarchy_service = HierarchyService(db)
+        success = hierarchy_service.repair_structure(entity_type, entity_id)
+
+        if success:
+            return {"status": "repaired", "message": "Folder structure repair triggered successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to repair structure")
+
+    except Exception as e:
+        print(f"Repair endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -286,3 +286,36 @@ class HierarchyService:
                 self.drive_service.update_file_metadata(mapping.folder_id, entity_name)
         except Exception as e:
             print(f"Error syncing folder name: {e}")
+
+    def repair_structure(self, entity_type: str, entity_id: str) -> bool:
+        """
+        Forces the re-application of the folder template for a given entity.
+        Useful for fixing missing folders or partial creations.
+        """
+        # 1. Fetch or create the main folder mapping
+        # If it doesn't exist, ensure_..._structure will create it AND call apply_template
+        # But if it exists, it returns early. So we need to handle the 'exists' case here by manually calling apply_template.
+
+        mapping = None
+        try:
+            if entity_type == "company":
+                mapping = self.ensure_company_structure(entity_id)
+            elif entity_type == "lead":
+                mapping = self.ensure_lead_structure(entity_id)
+            elif entity_type == "deal":
+                mapping = self.ensure_deal_structure(entity_id)
+            else:
+                raise ValueError(f"Unknown entity type: {entity_type}")
+        except Exception as e:
+            print(f"Repair: Error resolving root folder: {e}")
+            return False
+
+        if not mapping or not mapping.folder_id:
+            return False
+
+        print(f"Repairing structure for {entity_type} {entity_id} (Folder: {mapping.folder_id})")
+        from services.template_service import TemplateService
+        ts = TemplateService(self.db, self.drive_service)
+        ts.apply_template(entity_type, mapping.folder_id)
+
+        return True
