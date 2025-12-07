@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 from services.google_calendar_service import GoogleCalendarService
+from services.google_drive_real import GoogleDriveRealService
 import logging
 
 router = APIRouter()
@@ -40,13 +41,6 @@ async def receive_google_webhook(
 ):
     """
     Unified endpoint to receive webhook notifications from Google (Drive or Calendar).
-    Note: Ideally we might split these into /webhooks/drive and /webhooks/calendar,
-    but if they point to the same URL in config, we handle both here or dispatch.
-    
-    Given the path is /webhooks/google-drive in the existing code, I will keep using it
-    or check if I can register a different URL for calendar.
-    
-    For clarity, I'll check if this is a Drive or Calendar webhook based on DB lookup.
     """
     
     logger.info(f"Received webhook: channel={x_goog_channel_id} resource={x_goog_resource_id} state={x_goog_resource_state}")
@@ -76,12 +70,13 @@ async def receive_google_webhook(
 
 
 async def handle_drive_webhook(db, channel, state, token, uri, changed):
-    # (Preserve existing logic for Drive)
+    """
+    Process Google Drive Webhook with Bidirectional Sync
+    """
     if not channel.active:
         return {"status": "ignored", "reason": "inactive_channel"}
     
     if config.WEBHOOK_SECRET and token != config.WEBHOOK_SECRET:
-         # Log warning but maybe don't error to avoid retries if it's a config mismatch
          logger.warning("Invalid token for Drive webhook")
     
     if state == "sync":
@@ -90,15 +85,105 @@ async def handle_drive_webhook(db, channel, state, token, uri, changed):
 
     # Extract changed resource ID from URI if available
     changed_resource_id = None
-    if uri:
-        # Simple extraction - look for files/ in the URI
-        if "/files/" in uri:
-            parts = uri.split("/files/")
-            if len(parts) > 1:
-                # Extract file ID (remove query params)
-                changed_resource_id = parts[1].split("?")[0]
+    if uri and "/files/" in uri:
+        parts = uri.split("/files/")
+        if len(parts) > 1:
+            # Extract file ID (remove query params)
+            changed_resource_id = parts[1].split("?")[0]
 
-    # Log change
+    if not changed_resource_id:
+        return {"status": "ignored", "reason": "no_resource_id"}
+
+    # --- BIDIRECTIONAL SYNC LOGIC ---
+    
+    # We use Real service to fetch fresh metadata
+    # Note: If USE_MOCK_DRIVE is true, this might fail or need the Mock Service.
+    # Assuming production environment for webhooks.
+    drive_service = GoogleDriveRealService()
+
+    try:
+        # Case 1: Removal or Trash (Soft Delete in DB)
+        if state in ["remove", "trash"]:
+            # Check Files
+            file_record = db.query(models.DriveFile).filter(models.DriveFile.file_id == changed_resource_id).first()
+            if file_record:
+                file_record.deleted_at = datetime.now(timezone.utc)
+                file_record.delete_reason = "external_drive_delete"
+                logger.info(f"Sync: Marked file {changed_resource_id} as deleted")
+
+            # Check Folders
+            folder_record = db.query(models.DriveFolder).filter(models.DriveFolder.folder_id == changed_resource_id).first()
+            if folder_record:
+                folder_record.deleted_at = datetime.now(timezone.utc)
+                folder_record.delete_reason = "external_drive_delete"
+                logger.info(f"Sync: Marked folder {changed_resource_id} as deleted")
+            
+            db.commit()
+
+        # Case 2: Add or Update (Sync Metadata)
+        elif state in ["add", "update", "change"]:
+            try:
+                # Fetch fresh data from Drive
+                g_file = drive_service.get_file(changed_resource_id)
+                
+                is_folder = g_file.get('mimeType') == 'application/vnd.google-apps.folder'
+                
+                if is_folder:
+                    # Update Folder Logic
+                    folder_record = db.query(models.DriveFolder).filter(models.DriveFolder.folder_id == changed_resource_id).first()
+                    if folder_record:
+                        # Restore if it was deleted
+                        if folder_record.deleted_at:
+                             folder_record.deleted_at = None
+                             folder_record.delete_reason = None
+                        
+                        # Update URL if changed (unlikely for existing ID but good practice)
+                        if g_file.get('webViewLink'):
+                            folder_record.folder_url = g_file.get('webViewLink')
+                            
+                        db.commit()
+                        logger.info(f"Sync: Updated folder {g_file.get('name')}")
+                else:
+                    # Update/Insert File Logic
+                    file_record = db.query(models.DriveFile).filter(models.DriveFile.file_id == changed_resource_id).first()
+                    
+                    parent_id = g_file.get('parents', [None])[0]
+                    
+                    if file_record:
+                        # Update existing file
+                        file_record.name = g_file.get('name')
+                        file_record.size = int(g_file.get('size', 0))
+                        file_record.parent_folder_id = parent_id
+                        file_record.mime_type = g_file.get('mimeType')
+                        # Restore if deleted
+                        file_record.deleted_at = None 
+                        file_record.delete_reason = None
+                        logger.info(f"Sync: Updated file {g_file.get('name')}")
+                    else:
+                        # Insert new file (only if we care about the parent)
+                        # We generally only track files inside our known structures
+                        # But for now, we add it if we got a webhook for it (implies we are watching the folder)
+                        new_file = models.DriveFile(
+                            file_id=changed_resource_id,
+                            parent_folder_id=parent_id,
+                            name=g_file.get('name'),
+                            mime_type=g_file.get('mimeType'),
+                            size=int(g_file.get('size', 0))
+                        )
+                        db.add(new_file)
+                        logger.info(f"Sync: Created local record for file {g_file.get('name')}")
+                    
+                    db.commit()
+
+            except Exception as e:
+                # If 404, it might have been permanently deleted before we could fetch
+                logger.error(f"Sync Error fetching file {changed_resource_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Database error during sync: {e}")
+        db.rollback()
+
+    # Log the event to audit log
     change_log = models.DriveChangeLog(
         channel_id=channel.channel_id,
         resource_id=channel.resource_id,
@@ -127,13 +212,11 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
         return {"status": "ok"}
 
     # Trigger Sync Logic
-    # We do this synchronously for now, but in prod should be a background task (Celery/RQ)
     try:
         service = GoogleCalendarService()
         sync_calendar_events(db, service, channel)
     except Exception as e:
         logger.error(f"Error syncing calendar: {e}", exc_info=True)
-        # Return 200 to avoid Google retrying indefinitely if it's a logic error
         return {"status": "error", "detail": str(e)}
 
     return {"status": "ok", "type": "calendar"}
@@ -141,7 +224,7 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
 
 def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: models.CalendarSyncState):
     """
-    Core Two-Way Sync Logic using Sync Token.
+    Core Two-Way Sync Logic using Sync Token for Calendar.
     """
     logger.info(f"Syncing calendar {channel.calendar_id} with token {channel.sync_token}")
 
@@ -150,31 +233,19 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
     
     while True:
         try:
-            # If we have a sync token, use it. If it's invalid (410), we'll catch it.
-            # list_events handles sync_token logic.
-            # Note: list_events returns dict.
             result = service.service.events().list(
                 calendarId=channel.calendar_id,
                 syncToken=channel.sync_token,
                 pageToken=page_token,
-                singleEvents=True # Important for expanding recurrences
+                singleEvents=True
             ).execute()
         except Exception as e:
             error_msg = str(e)
             if '410' in error_msg or 'sync token is no longer valid' in error_msg.lower():
                 logger.warning("Sync token invalid (410). Performing full sync.")
-                # Clear token to force full sync
                 channel.sync_token = None
-
-                # Optional: Clear local events if we want to rebuild from scratch to avoid duplicates
-                # if the logic below isn't perfectly idempotent.
-                # However, our logic below is an "upsert" based on google_id, so it should be fine.
-                # If an event was deleted in the gap, full sync won't return it, so we won't know to delete it locally.
-                # To be purely correct, on 410, we should likely fetch ALL events and detect deletions.
-                # But for now, we just re-sync what Google gives us.
-
                 db.commit()
-                continue # Retry loop with no token
+                continue
             else:
                 logger.error(f"Google API Error during sync: {e}")
                 raise e
@@ -183,9 +254,8 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         
         for item in items:
             google_id = item.get('id')
-            status = item.get('status') # confirmed, tentative, cancelled
+            status = item.get('status')
 
-            # Find local event
             local_event = db.query(models.CalendarEvent).filter(
                 models.CalendarEvent.google_event_id == google_id
             ).first()
@@ -193,10 +263,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
             if status == 'cancelled':
                 if local_event:
                     local_event.status = 'cancelled'
-                    # optional: db.delete(local_event)
             else:
-                # Upsert
-                # Extract fields
                 summary = item.get('summary')
                 description = item.get('description')
                 start_raw = item.get('start', {}).get('dateTime') or item.get('start', {}).get('date')
@@ -205,7 +272,6 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 html_link = item.get('htmlLink')
                 organizer = item.get('organizer', {}).get('email')
 
-                # Parse times (rough ISO parsing)
                 start_dt = datetime.fromisoformat(start_raw.replace('Z', '+00:00')) if start_raw else None
                 end_dt = datetime.fromisoformat(end_raw.replace('Z', '+00:00')) if end_raw else None
 
@@ -232,7 +298,6 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         if not page_token:
             break
 
-    # Update Sync Token
     if new_sync_token:
         channel.sync_token = new_sync_token
         channel.updated_at = datetime.now(timezone.utc)
@@ -245,5 +310,11 @@ def get_webhook_status(db: Session = Depends(get_db)):
     """
     Get status of all active webhook channels (Drive & Calendar).
     """
-    # ... (Keep existing implementation or expand)
-    return {"message": "Use DB to check status"}
+    active_channels = db.query(models.DriveWebhookChannel).filter(models.DriveWebhookChannel.active == True).count()
+    active_calendar_channels = db.query(models.CalendarSyncState).filter(models.CalendarSyncState.active == True).count()
+    
+    return {
+        "message": "Webhook Status",
+        "active_drive_channels": active_channels,
+        "active_calendar_channels": active_calendar_channels
+    }
