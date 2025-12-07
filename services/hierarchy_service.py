@@ -24,9 +24,11 @@ class HierarchyService:
     def get_or_create_companies_root(self) -> models.DriveFolder:
         """
         Ensures the root folder '/Companies' exists.
+        Checks DB first, then Drive to avoid duplicates (repair scenario).
         """
         root_name = "Companies"
-        # Check if we already mapped it
+        
+        # 1. Check if we already mapped it in DB
         mapped_root = self.db.query(models.DriveFolder).filter_by(
             entity_type="system_root",
             entity_id=COMPANIES_ROOT_UUID
@@ -38,19 +40,40 @@ class HierarchyService:
         if not config.DRIVE_ROOT_FOLDER_ID:
             raise ValueError("DRIVE_ROOT_FOLDER_ID not configured. Operations require a strict Shared Drive root.")
 
-        print(f"Creating System Root: {root_name} in {config.DRIVE_ROOT_FOLDER_ID}")
-        folder = self.drive_service.create_folder(name=root_name, parent_id=config.DRIVE_ROOT_FOLDER_ID)
+        # 2. Check if it exists in Drive (Prevent Duplicates)
+        print(f"Checking for existing '{root_name}' in Drive root...")
+        
+        # List children of the root folder to find if 'Companies' already exists
+        children = self.drive_service.list_files(config.DRIVE_ROOT_FOLDER_ID)
+        
+        existing_folder = None
+        for file in children:
+            if file.get('name') == root_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                existing_folder = file
+                break
+        
+        if existing_folder:
+            print(f"Found existing System Root in Drive: {existing_folder['id']}")
+            folder_id = existing_folder['id']
+            folder_url = existing_folder.get('webViewLink')
+        else:
+            # 3. Create only if not found
+            print(f"Creating System Root: {root_name} in {config.DRIVE_ROOT_FOLDER_ID}")
+            folder = self.drive_service.create_folder(name=root_name, parent_id=config.DRIVE_ROOT_FOLDER_ID)
+            folder_id = folder['id']
+            folder_url = folder.get('webViewLink')
 
-        # CORREÇÃO AQUI: Passando folder_url
+        # 4. Save Mapping to DB (Repair or New)
         new_mapping = models.DriveFolder(
             entity_type="system_root",
             entity_id=COMPANIES_ROOT_UUID,
-            folder_id=folder["id"],
-            folder_url=folder.get("webViewLink")
+            folder_id=folder_id,
+            folder_url=folder_url
         )
         self.db.add(new_mapping)
         self.db.commit()
         self.db.refresh(new_mapping)
+        
         return new_mapping
 
     def ensure_company_structure(self, company_id: str) -> models.DriveFolder:
@@ -81,7 +104,6 @@ class HierarchyService:
         folder = self.drive_service.create_folder(name=folder_name, parent_id=companies_root.folder_id)
 
         # 5. Save Mapping
-        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="company",
             entity_id=company_id,
@@ -119,6 +141,7 @@ class HierarchyService:
             print(f"Warning: Deal {deal_id} has no company_id. Creating in root.")
             folder_name = f"Deal - {deal.title}"
             folder = self.drive_service.create_folder(name=folder_name) # Root
+            # Note: No parent_id logic for root creation here, implies root of drive or specific folder logic needed
         else:
             # Ensure Company Structure
             company_folder = self.ensure_company_structure(deal.company_id)
@@ -140,7 +163,6 @@ class HierarchyService:
             folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
 
         # Map
-        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="deal",
             entity_id=deal_id,
@@ -195,7 +217,6 @@ class HierarchyService:
             folder_name = f"Lead - {lead.title}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
 
-        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="lead",
             entity_id=lead_id,
