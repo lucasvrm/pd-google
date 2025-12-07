@@ -20,9 +20,8 @@ def migrate_add_soft_delete_fields():
     
     print("Starting migration: Adding soft delete fields to drive_files...")
     
-    try:
-        # Use engine.begin() for automatic transaction management in SQLAlchemy 2.0
-        with engine.begin() as conn:
+    with engine.connect() as conn:
+        try:
             # Add soft delete fields to drive_files table
             print("Adding soft delete fields to drive_files table...")
             

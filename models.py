@@ -107,10 +107,12 @@ class Lead(Base):
     company = relationship("Company")
 
 class Deal(Base):
-    __tablename__ = "deals"
+    __tablename__ = "master_deals"
 
     id = Column(String, primary_key=True) # UUID
     title = Column(String) # Deal name/title
+    # Note: If master_deals uses a different column name for company_id, we might need to update this too.
+    # But for now, assuming standard convention or verified later.
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
 
     # Relationship
