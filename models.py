@@ -93,14 +93,16 @@ class Company(Base):
 
     id = Column(String, primary_key=True) # UUID
     name = Column(String) # Razão Social or Name
-    fantasy_name = Column(String, nullable=True) # Nome Fantasia
+    # fantasy_name removed as it does not exist in schema
+
     # Add other fields if necessary, but we only need names for folder naming
 
 class Lead(Base):
     __tablename__ = "leads"
 
     id = Column(String, primary_key=True) # UUID
-    title = Column(String) # Lead name/title
+    # Map 'title' attribute to 'legal_name' column
+    title = Column("legal_name", String)
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
 
     # Relationship (optional, but helpful)
@@ -110,9 +112,10 @@ class Deal(Base):
     __tablename__ = "master_deals"
 
     id = Column(String, primary_key=True) # UUID
-    title = Column(String) # Deal name/title
-    # Note: If master_deals uses a different column name for company_id, we might need to update this too.
-    # But for now, assuming standard convention or verified later.
+    # Map 'title' attribute to 'client_name' column
+    # Note: 'client_name' is the column name in master_deals table per schema inspection
+    title = Column("client_name", String)
+
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
 
     # Relationship
