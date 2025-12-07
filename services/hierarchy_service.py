@@ -35,25 +35,18 @@ class HierarchyService:
         if mapped_root:
             return mapped_root
 
-        # Check if it exists in Drive (by name search in root)
-        # NOTE: For MVP/Mock, we might just create it.
-        # In real life, we should search. 'list_files' in our service usually lists children of a folder.
-        # We need a search_folder function.
-        # But our current service abstractions are simple.
-        # Let's try to create it, and if it fails (unlikely in mock) or we just create a new one.
-        # To avoid duplicates in REAL drive, we should search.
-        # Assumption: For now, we create it and rely on local DB mapping to not create again.
-
         if not config.DRIVE_ROOT_FOLDER_ID:
             raise ValueError("DRIVE_ROOT_FOLDER_ID not configured. Operations require a strict Shared Drive root.")
 
         print(f"Creating System Root: {root_name} in {config.DRIVE_ROOT_FOLDER_ID}")
         folder = self.drive_service.create_folder(name=root_name, parent_id=config.DRIVE_ROOT_FOLDER_ID)
 
+        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="system_root",
             entity_id=COMPANIES_ROOT_UUID,
-            folder_id=folder["id"]
+            folder_id=folder["id"],
+            folder_url=folder.get("webViewLink")
         )
         self.db.add(new_mapping)
         self.db.commit()
@@ -75,11 +68,9 @@ class HierarchyService:
         # 2. Get Company Name from Supabase DB
         company = self.db.query(models.Company).filter_by(id=company_id).first()
         if not company:
-            # Fallback if company not found in DB (shouldn't happen if syncing is correct)
-            # Use ID as name or generic
+            # Fallback if company not found in DB
             folder_name = f"Company {company_id}"
         else:
-            # Use Name as fantasy_name does not exist in schema
             folder_name = company.name or f"Company {company_id}"
 
         # 3. Get Parent (Companies Root)
@@ -90,10 +81,12 @@ class HierarchyService:
         folder = self.drive_service.create_folder(name=folder_name, parent_id=companies_root.folder_id)
 
         # 5. Save Mapping
+        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="company",
             entity_id=company_id,
-            folder_id=folder["id"]
+            folder_id=folder["id"],
+            folder_url=folder.get("webViewLink")
         )
         self.db.add(new_mapping)
         self.db.commit()
@@ -123,21 +116,14 @@ class HierarchyService:
             raise ValueError(f"Deal {deal_id} not found in database")
 
         if not deal.company_id:
-            # Standalone Deal? Fallback to creating in root or a 'Unassigned Deals' folder?
-            # User requirement implies structure inside Company.
-            # We will handle as exception or fallback.
             print(f"Warning: Deal {deal_id} has no company_id. Creating in root.")
             folder_name = f"Deal - {deal.title}"
             folder = self.drive_service.create_folder(name=folder_name) # Root
-            parent_id = None
         else:
             # Ensure Company Structure
             company_folder = self.ensure_company_structure(deal.company_id)
 
             # Find '02. Deals' folder inside Company Folder
-            # We can rely on list_files or we can query our node mapping?
-            # No, node mapping maps templates, not instances.
-            # We need to list files in company_folder and find '02. Deals'
             children = self.drive_service.list_files(company_folder.folder_id)
             deals_folder_id = None
             for child in children:
@@ -146,7 +132,6 @@ class HierarchyService:
                     break
 
             if not deals_folder_id:
-                # Should have been created by template, but if missing, create it
                 print("Repairing: Creating '02. Deals' folder")
                 f = self.drive_service.create_folder("02. Deals", parent_id=company_folder.folder_id)
                 deals_folder_id = f['id']
@@ -155,10 +140,12 @@ class HierarchyService:
             folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
 
         # Map
+        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="deal",
             entity_id=deal_id,
-            folder_id=folder["id"]
+            folder_id=folder["id"],
+            folder_url=folder.get("webViewLink")
         )
         self.db.add(new_mapping)
         self.db.commit()
@@ -208,10 +195,12 @@ class HierarchyService:
             folder_name = f"Lead - {lead.title}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
 
+        # CORREÇÃO AQUI: Passando folder_url
         new_mapping = models.DriveFolder(
             entity_type="lead",
             entity_id=lead_id,
-            folder_id=folder["id"]
+            folder_id=folder["id"],
+            folder_url=folder.get("webViewLink")
         )
         self.db.add(new_mapping)
         self.db.commit()

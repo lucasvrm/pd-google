@@ -4,9 +4,7 @@ import uuid
 import datetime
 from typing import List, Optional, Dict, Any
 
-# Get the directory where this file (google_drive_mock.py) is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Go up one level to pd-google root (assuming services/ is one level deep)
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 DB_FILE = os.path.join(PROJECT_ROOT, "mock_drive_db.json")
 
@@ -20,7 +18,6 @@ class GoogleDriveService:
                 try:
                     self.db = json.load(f)
                 except json.JSONDecodeError:
-                    # Fallback if corrupted
                     self.db = {"files": {}, "folders": {"root": {"id": "root", "name": "My Drive", "parents": []}}}
         else:
             self.db = {
@@ -36,14 +33,17 @@ class GoogleDriveService:
             json.dump(self.db, f, indent=2)
 
     def create_folder(self, name: str, parent_id: str = "root") -> Dict[str, Any]:
-        self._load_db() # Reload to get latest state before writing
+        self._load_db()
         folder_id = str(uuid.uuid4())
+        
+        # CORREÇÃO AQUI: Adicionado webViewLink simulado
         folder = {
             "id": folder_id,
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id],
-            "createdTime": datetime.datetime.now().isoformat()
+            "createdTime": datetime.datetime.now().isoformat(),
+            "webViewLink": f"https://mock-drive.google.com/folders/{folder_id}"
         }
         self.db["folders"][folder_id] = folder
         self._save_db()
@@ -67,7 +67,7 @@ class GoogleDriveService:
         return file_meta
 
     def list_files(self, folder_id: str = "root") -> List[Dict[str, Any]]:
-        self._load_db() # Reload to ensure we see files created by other instances
+        self._load_db()
         items = []
         for f in self.db["folders"].values():
             if folder_id in f.get("parents", []):

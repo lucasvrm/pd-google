@@ -26,9 +26,10 @@ class GoogleDriveRealService:
         if parent_id:
             file_metadata['parents'] = [parent_id]
 
+        # CORREÇÃO AQUI: Adicionado 'webViewLink' no parâmetro fields
         file = self.service.files().create(
             body=file_metadata,
-            fields='id, name, mimeType, parents, createdTime',
+            fields='id, name, mimeType, parents, createdTime, webViewLink',
             supportsAllDrives=True
         ).execute()
         
