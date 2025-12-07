@@ -71,8 +71,8 @@ class HierarchyService:
             # Use ID as name or generic
             folder_name = f"Company {company_id}"
         else:
-            # Use Fantasy Name if available, else Name
-            folder_name = company.fantasy_name or company.name or f"Company {company_id}"
+            # Use Name as fantasy_name does not exist in schema
+            folder_name = company.name or f"Company {company_id}"
 
         # 3. Get Parent (Companies Root)
         companies_root = self.get_or_create_companies_root()
