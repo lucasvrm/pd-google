@@ -3,6 +3,7 @@ import models
 from services.google_drive_mock import GoogleDriveService
 from services.google_drive_real import GoogleDriveRealService
 from config import config
+import uuid
 
 # Factory for Drive Service
 def get_drive_service():
@@ -10,6 +11,10 @@ def get_drive_service():
         return GoogleDriveService()
     else:
         return GoogleDriveRealService()
+
+# Constant UUID for the system root folder to satisfy database constraints
+# We use a deterministic UUID so it remains consistent across restarts/deploys
+COMPANIES_ROOT_UUID = str(uuid.UUID('00000000-0000-0000-0000-000000000001'))
 
 class HierarchyService:
     def __init__(self, db: Session):
@@ -24,7 +29,7 @@ class HierarchyService:
         # Check if we already mapped it
         mapped_root = self.db.query(models.DriveFolder).filter_by(
             entity_type="system_root",
-            entity_id="companies_root"
+            entity_id=COMPANIES_ROOT_UUID
         ).first()
 
         if mapped_root:
@@ -44,7 +49,7 @@ class HierarchyService:
 
         new_mapping = models.DriveFolder(
             entity_type="system_root",
-            entity_id="companies_root",
+            entity_id=COMPANIES_ROOT_UUID,
             folder_id=folder["id"]
         )
         self.db.add(new_mapping)
