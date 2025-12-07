@@ -32,6 +32,22 @@ class GoogleDriveService:
         with open(DB_FILE, "w") as f:
             json.dump(self.db, f, indent=2)
 
+    def get_or_create_folder(self, name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Mock implementation of get_or_create_folder.
+        """
+        parent_id = parent_id or "root"
+
+        # 1. Check if exists
+        # In mock, we can iterate over folders
+        self._load_db()
+        for f_id, f_data in self.db["folders"].items():
+            if f_data.get("name") == name and parent_id in f_data.get("parents", []):
+                return f_data
+
+        # 2. Create if not exists
+        return self.create_folder(name, parent_id)
+
     def create_folder(self, name: str, parent_id: str = "root") -> Dict[str, Any]:
         self._load_db()
         folder_id = str(uuid.uuid4())

@@ -1,6 +1,9 @@
 import io
+import time
+import random
 from typing import List, Dict, Any, Optional
 from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.errors import HttpError
 from config import config
 from cache import cache_service
 from services.google_auth import GoogleAuthService
@@ -16,6 +19,75 @@ class GoogleDriveRealService:
         if not self.service:
             raise Exception("Drive Service configuration error: GOOGLE_SERVICE_ACCOUNT_JSON is missing or invalid.")
 
+    def _retry_operation(self, func, *args, **kwargs):
+        """
+        Executes a function with exponential backoff retry logic for transient errors.
+        Handles Rate Limits (403, 429) and Server Errors (5xx).
+        """
+        max_retries = 5
+        base_delay = 1.0  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except HttpError as e:
+                # Retry on Rate Limits and Server Errors
+                if e.resp.status in [403, 429, 500, 502, 503, 504]:
+                    if attempt == max_retries - 1:
+                        print(f"Drive API Error {e.resp.status}: Max retries exceeded.")
+                        raise
+
+                    # Extract reason if possible
+                    reason = "Unknown"
+                    try:
+                        import json
+                        error_content = json.loads(e.content.decode('utf-8'))
+                        reason = error_content.get('error', {}).get('message', 'Unknown')
+                    except:
+                        pass
+
+                    # Calculate backoff with jitter
+                    sleep_time = (base_delay * (2 ** attempt)) + (random.randint(0, 1000) / 1000)
+                    print(f"Drive API Error {e.resp.status} ({reason}). Retrying in {sleep_time:.2f}s... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(sleep_time)
+
+                    # Check if we need to refresh auth (sometimes helpful for long running processes)
+                    if attempt > 2:
+                         self.service = self.auth_service.get_service('drive', 'v3')
+                else:
+                    raise
+            except Exception as e:
+                # Re-raise other exceptions (like connection errors? maybe retry those too?)
+                # For now, only HttpError logic is specific.
+                print(f"Unexpected error in Drive operation: {e}")
+                raise
+
+    def get_or_create_folder(self, name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Checks if a folder with the given name exists in the parent_id.
+        If it exists, returns the metadata.
+        If not, creates it.
+        This ensures idempotency and helps in repairing folder structures.
+        """
+        self._check_auth()
+
+        target_parent = parent_id if parent_id else 'root'
+
+        try:
+            # 1. Try to find existing folder
+            # list_files already uses cache, so this is efficient
+            children = self.list_files(target_parent)
+            for file in children:
+                if file.get('name') == name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                     # Found it!
+                     print(f"Folder '{name}' already exists in {target_parent}. Using ID: {file['id']}")
+                     return file
+        except Exception as e:
+            print(f"Warning: Failed to list files in get_or_create_folder: {e}. Proceeding to create attempt.")
+
+        # 2. Create if not found
+        return self.create_folder(name, parent_id)
+
     def create_folder(self, name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
         self._check_auth()
 
@@ -26,11 +98,14 @@ class GoogleDriveRealService:
         if parent_id:
             file_metadata['parents'] = [parent_id]
 
-        file = self.service.files().create(
-            body=file_metadata,
-            fields='id, name, mimeType, parents, createdTime, webViewLink',
-            supportsAllDrives=True
-        ).execute()
+        def _api_call():
+            return self.service.files().create(
+                body=file_metadata,
+                fields='id, name, mimeType, parents, createdTime, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+
+        file = self._retry_operation(_api_call)
         
         # Invalidate cache for parent folder listing
         if parent_id:
@@ -48,12 +123,15 @@ class GoogleDriveRealService:
 
         media = MediaIoBaseUpload(io.BytesIO(file_content), mimetype=mime_type, resumable=True)
 
-        file = self.service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, name, mimeType, parents, size, createdTime, webViewLink',
-            supportsAllDrives=True
-        ).execute()
+        def _api_call():
+            return self.service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, name, mimeType, parents, size, createdTime, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+
+        file = self._retry_operation(_api_call)
         
         # Invalidate cache for parent folder listing
         if parent_id:
@@ -72,14 +150,17 @@ class GoogleDriveRealService:
             return cached_result
 
         query = f"'{folder_id}' in parents and trashed = false"
-        results = self.service.files().list(
-            q=query,
-            pageSize=100,
-            fields="nextPageToken, files(id, name, mimeType, parents, webViewLink, createdTime, size)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
 
+        def _api_call():
+            return self.service.files().list(
+                q=query,
+                pageSize=100,
+                fields="nextPageToken, files(id, name, mimeType, parents, webViewLink, createdTime, size)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+
+        results = self._retry_operation(_api_call)
         files = results.get('files', [])
         
         # Store in cache
@@ -90,11 +171,14 @@ class GoogleDriveRealService:
     def get_file(self, file_id: str) -> Dict[str, Any]:
         self._check_auth()
         # ADICIONADO 'trashed' para lógica de reconciliação
-        return self.service.files().get(
-            fileId=file_id,
-            fields='id, name, mimeType, parents, webViewLink, createdTime, size, trashed',
-            supportsAllDrives=True
-        ).execute()
+        def _api_call():
+            return self.service.files().get(
+                fileId=file_id,
+                fields='id, name, mimeType, parents, webViewLink, createdTime, size, trashed',
+                supportsAllDrives=True
+            ).execute()
+
+        return self._retry_operation(_api_call)
 
     def update_file_metadata(self, file_id: str, new_name: str) -> Dict[str, Any]:
         """Atualiza metadados de um arquivo ou pasta (ex: renomear)."""
@@ -102,14 +186,15 @@ class GoogleDriveRealService:
         
         file_metadata = {'name': new_name}
         
-        updated_file = self.service.files().update(
-            fileId=file_id,
-            body=file_metadata,
-            fields='id, name, mimeType, webViewLink',
-            supportsAllDrives=True
-        ).execute()
+        def _api_call():
+            return self.service.files().update(
+                fileId=file_id,
+                body=file_metadata,
+                fields='id, name, mimeType, webViewLink',
+                supportsAllDrives=True
+            ).execute()
         
-        return updated_file
+        return self._retry_operation(_api_call)
 
     def add_permission(self, file_id: str, role: str, email: str, type: str = 'user'):
         """
@@ -122,9 +207,13 @@ class GoogleDriveRealService:
             'role': role,
             'emailAddress': email
         }
-        return self.service.permissions().create(
-            fileId=file_id,
-            body=permission,
-            fields='id',
-            supportsAllDrives=True
-        ).execute()
+
+        def _api_call():
+            return self.service.permissions().create(
+                fileId=file_id,
+                body=permission,
+                fields='id',
+                supportsAllDrives=True
+            ).execute()
+
+        return self._retry_operation(_api_call)

@@ -59,19 +59,26 @@ class TemplateService:
 
         def create_nodes_recursive(current_nodes, parent_drive_id):
             for node in current_nodes:
-                print(f"Creating template folder: {node.name} inside {parent_drive_id}")
-                created = self.drive_service.create_folder(
+                print(f"Ensuring template folder: {node.name} inside {parent_drive_id}")
+
+                # CHANGED: Use get_or_create_folder to be idempotent and robust
+                # This allows repairing partial structures without duplicates
+                created = self.drive_service.get_or_create_folder(
                     name=node.name,
                     parent_id=parent_drive_id
                 )
-                node_to_drive_id[node.id] = created['id']
 
-                # Process children
-                children = tree.get(node.id, [])
-                if children:
-                    # Sort children by order
-                    children_sorted = sorted(children, key=lambda x: x.order)
-                    create_nodes_recursive(children_sorted, created['id'])
+                if created and 'id' in created:
+                    node_to_drive_id[node.id] = created['id']
+
+                    # Process children
+                    children = tree.get(node.id, [])
+                    if children:
+                        # Sort children by order
+                        children_sorted = sorted(children, key=lambda x: x.order)
+                        create_nodes_recursive(children_sorted, created['id'])
+                else:
+                    print(f"Error: Failed to create/get folder {node.name}. Skipping children.")
 
         # Start with root nodes
         create_nodes_recursive(queue, root_folder_id)
