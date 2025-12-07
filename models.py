@@ -30,6 +30,11 @@ class DriveFolder(Base):
     entity_id = Column(String, index=True)
     entity_type = Column(String, index=True) # company, lead, deal, contact
     folder_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
+    
+    # --- ADDED THIS LINE ---
+    folder_url = Column(String) 
+    # -----------------------
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # Soft delete fields
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
@@ -73,8 +78,6 @@ class DriveStructureNode(Base):
     order = Column(Integer, default=0)
 
     template = relationship("DriveStructureTemplate", back_populates="nodes")
-    # Simplification: For now just one level deep for MVP, or fix self-referential
-    # We will omit 'children' explicit prop for now to fix the seeding error quickly.
 
 # Roles & Permissions (Simplified for MVP)
 class UserRole(Base):
@@ -93,9 +96,6 @@ class Company(Base):
 
     id = Column(String, primary_key=True) # UUID
     name = Column(String) # Razão Social or Name
-    # fantasy_name removed as it does not exist in schema
-
-    # Add other fields if necessary, but we only need names for folder naming
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -113,7 +113,6 @@ class Deal(Base):
 
     id = Column(String, primary_key=True) # UUID
     # Map 'title' attribute to 'client_name' column
-    # Note: 'client_name' is the column name in master_deals table per schema inspection
     title = Column("client_name", String)
 
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
@@ -181,12 +180,6 @@ class CalendarEvent(Base):
     status = Column(String)  # confirmed, tentative, cancelled
     organizer_email = Column(String)
 
-    # Attendees (stored as JSON for simplicity in MVP)
-    # Using String/Text for SQLite compatibility if needed, but JSON type for PG is better
-    # For compatibility with both, we use JSON from sqlalchemy.dialects.postgresql if available,
-    # but since this project supports SQLite dev, we might use a generic JSON type or Text.
-    # Given the requirements.txt has psycopg2, we can assume PG is target, but let's be safe.
-    # We will import JSON from sqlalchemy.types which works on recent SQLAlchemy versions for both.
     attendees = Column(Text) # Storing as JSON string for maximum compatibility
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
