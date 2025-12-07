@@ -139,7 +139,7 @@ class HierarchyService:
 
         if not deal.company_id:
             print(f"Warning: Deal {deal_id} has no company_id. Creating in root.")
-            folder_name = f"Deal - {deal.title}"
+            folder_name = f"Deal - {getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))}"
             folder = self.drive_service.create_folder(name=folder_name) # Root
         else:
             # Ensure Company Structure
@@ -158,7 +158,9 @@ class HierarchyService:
                 f = self.drive_service.create_folder("02. Deals", parent_id=company_folder.folder_id)
                 deals_folder_id = f['id']
 
-            folder_name = f"Deal - {deal.title}"
+            # CORREÇÃO: Usar client_name ou fallback seguro
+            deal_name = getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))
+            folder_name = f"Deal - {deal_name}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
 
         # Map
@@ -193,9 +195,12 @@ class HierarchyService:
         if not lead:
             raise ValueError(f"Lead {lead_id} not found")
 
+        # Determinar nome seguro para o Lead
+        lead_name = getattr(lead, 'legal_name', getattr(lead, 'name', 'Unknown'))
+
         if not lead.company_id:
             print(f"Warning: Lead {lead_id} has no company_id.")
-            folder_name = f"Lead - {lead.title}"
+            folder_name = f"Lead - {lead_name}"
             folder = self.drive_service.create_folder(name=folder_name)
         else:
             company_folder = self.ensure_company_structure(lead.company_id)
@@ -213,7 +218,7 @@ class HierarchyService:
                 f = self.drive_service.create_folder("01. Leads", parent_id=company_folder.folder_id)
                 leads_folder_id = f['id']
 
-            folder_name = f"Lead - {lead.title}"
+            folder_name = f"Lead - {lead_name}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
 
         new_mapping = models.DriveFolder(
@@ -248,15 +253,24 @@ class HierarchyService:
             
         # 2. Fetch updated entity name from DB
         entity_name = None
+        
         if entity_type == "company":
             ent = self.db.query(models.Company).filter_by(id=entity_id).first()
             if ent: entity_name = ent.name
+            
         elif entity_type == "deal":
             ent = self.db.query(models.Deal).filter_by(id=entity_id).first()
-            if ent: entity_name = f"Deal - {ent.title}"
+            # CORREÇÃO: Usa client_name se disponível, senão tenta name ou title
+            if ent: 
+                raw_name = getattr(ent, 'client_name', getattr(ent, 'name', getattr(ent, 'title', 'Deal')))
+                entity_name = f"Deal - {raw_name}"
+                
         elif entity_type == "lead":
             ent = self.db.query(models.Lead).filter_by(id=entity_id).first()
-            if ent: entity_name = f"Lead - {ent.title}"
+            # CORREÇÃO: Usa legal_name se disponível, senão tenta name ou title
+            if ent: 
+                raw_name = getattr(ent, 'legal_name', getattr(ent, 'name', getattr(ent, 'title', 'Lead')))
+                entity_name = f"Lead - {raw_name}"
             
         if not entity_name:
             return
