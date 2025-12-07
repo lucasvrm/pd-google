@@ -44,7 +44,10 @@ class HierarchyService:
         # To avoid duplicates in REAL drive, we should search.
         # Assumption: For now, we create it and rely on local DB mapping to not create again.
 
-        print(f"Creating System Root: {root_name}")
+        if not config.DRIVE_ROOT_FOLDER_ID:
+            raise ValueError("DRIVE_ROOT_FOLDER_ID not configured. Operations require a strict Shared Drive root.")
+
+        print(f"Creating System Root: {root_name} in {config.DRIVE_ROOT_FOLDER_ID}")
         folder = self.drive_service.create_folder(name=root_name, parent_id=config.DRIVE_ROOT_FOLDER_ID)
 
         new_mapping = models.DriveFolder(
