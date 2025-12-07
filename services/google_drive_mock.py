@@ -100,3 +100,51 @@ class GoogleDriveService:
         if file_id in self.db["files"]:
             return self.db["files"][file_id]
         return None
+
+    def update_file_metadata(self, file_id: str, new_name: str) -> Dict[str, Any]:
+        self._load_db()
+        item = self.get_file(file_id)
+        if item:
+            item["name"] = new_name
+            self._save_db()
+            return item
+        raise Exception("File not found")
+
+    def is_descendant(self, folder_id: str, ancestor_id: str) -> bool:
+        self._load_db()
+        current_id = folder_id
+        for _ in range(10):
+            if current_id == ancestor_id:
+                return True
+
+            # Find item
+            item = self.db["folders"].get(current_id) or self.db["files"].get(current_id)
+            if not item:
+                return False
+
+            parents = item.get("parents", [])
+            if not parents:
+                return False
+            current_id = parents[0]
+        return False
+
+    def get_breadcrumbs(self, folder_id: str, root_id: str) -> List[Dict[str, str]]:
+        self._load_db()
+        breadcrumbs = []
+        current_id = folder_id
+        for _ in range(10):
+            item = self.db["folders"].get(current_id) or self.db["files"].get(current_id)
+            if not item:
+                break
+
+            breadcrumbs.insert(0, {"id": item["id"], "name": item["name"]})
+
+            if current_id == root_id:
+                break
+
+            parents = item.get("parents", [])
+            if not parents:
+                break
+            current_id = parents[0]
+
+        return breadcrumbs
