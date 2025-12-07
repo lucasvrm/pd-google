@@ -26,7 +26,6 @@ class GoogleDriveRealService:
         if parent_id:
             file_metadata['parents'] = [parent_id]
 
-        # CORREÇÃO AQUI: Adicionado 'webViewLink' no parâmetro fields
         file = self.service.files().create(
             body=file_metadata,
             fields='id, name, mimeType, parents, createdTime, webViewLink',
@@ -90,11 +89,27 @@ class GoogleDriveRealService:
 
     def get_file(self, file_id: str) -> Dict[str, Any]:
         self._check_auth()
+        # ADICIONADO 'trashed' para lógica de reconciliação
         return self.service.files().get(
             fileId=file_id,
-            fields='id, name, mimeType, parents, webViewLink, createdTime, size',
+            fields='id, name, mimeType, parents, webViewLink, createdTime, size, trashed',
             supportsAllDrives=True
         ).execute()
+
+    def update_file_metadata(self, file_id: str, new_name: str) -> Dict[str, Any]:
+        """Atualiza metadados de um arquivo ou pasta (ex: renomear)."""
+        self._check_auth()
+        
+        file_metadata = {'name': new_name}
+        
+        updated_file = self.service.files().update(
+            fileId=file_id,
+            body=file_metadata,
+            fields='id, name, mimeType, webViewLink',
+            supportsAllDrives=True
+        ).execute()
+        
+        return updated_file
 
     def add_permission(self, file_id: str, role: str, email: str, type: str = 'user'):
         """

@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from database import SessionLocal
 import models
 from services.google_calendar_service import GoogleCalendarService
+from services.google_drive_real import GoogleDriveRealService
+from services.google_drive_mock import GoogleDriveService
 import logging
 from config import config
 
@@ -27,6 +29,16 @@ class SchedulerService:
                 id="renew_channels",
                 replace_existing=True
             )
+            
+            # Reconcile Drive State (Every 1 hour)
+            # Checks for consistency between DB and Drive (e.g. deleted folders)
+            self.scheduler.add_job(
+                self.reconcile_drive_state_job,
+                IntervalTrigger(hours=1), 
+                id="reconcile_drive",
+                replace_existing=True
+            )
+            
             self.scheduler.start()
             logger.info("Scheduler started.")
 
@@ -48,17 +60,26 @@ class SchedulerService:
         finally:
             db.close()
 
+    def reconcile_drive_state_job(self):
+        """
+        Job wrapper for reconciliation.
+        """
+        logger.info("Running Drive reconciliation job...")
+        db = SessionLocal()
+        try:
+            self.reconcile_folders(db)
+        except Exception as e:
+            logger.error(f"Error in reconciliation job: {e}")
+        finally:
+            db.close()
+
     def renew_expiring_channels(self, db: Session):
         """
         Find channels expiring in less than 24 hours and renew them.
         """
         threshold = datetime.now(timezone.utc) + timedelta(hours=24)
 
-        # 1. Find Drive Channels (if we want to renew them too)
-        # Note: DriveWebhookChannel expiration logic might differ slightly, focusing on Calendar for now as per plan
-        # But good to cover both if possible.
-
-        # 2. Find Calendar Channels
+        # Find Calendar Channels
         expiring_channels = db.query(models.CalendarSyncState).filter(
             models.CalendarSyncState.active == True,
             models.CalendarSyncState.expiration <= threshold
@@ -75,11 +96,7 @@ class SchedulerService:
     def _renew_calendar_channel(self, db: Session, channel: models.CalendarSyncState):
         """
         Renew a specific calendar channel by stopping it and starting a new one.
-        (Google API 'watch' doesn't support 'renew' directly, you usually stop and watch again,
-        or just watch again and let the old one die).
         """
-        # Strategy: Stop old channel, Create new one.
-
         # 1. Stop old channel (Best effort)
         try:
             self.calendar_service.stop_channel(channel.channel_id, channel.resource_id)
@@ -102,11 +119,6 @@ class SchedulerService:
             expiration=expiration_ms
         )
 
-        # 3. Update DB
-        # We can either update the existing row or create a new one.
-        # Updating allows keeping the sync_token history associated with the "logical" sync state.
-        # However, channel_id must be unique.
-
         logger.info(f"Renewed channel. Old: {channel.channel_id}, New: {new_channel_id}")
 
         channel.channel_id = new_channel_id
@@ -115,5 +127,45 @@ class SchedulerService:
         channel.updated_at = datetime.now(timezone.utc)
 
         db.commit()
+
+    def reconcile_folders(self, db: Session):
+        """
+        Verifies if active folders in DB still exist in Drive.
+        If deleted externally and webhook missed, mark as deleted in DB.
+        """
+        if config.USE_MOCK_DRIVE:
+            drive_service = GoogleDriveService()
+        else:
+            drive_service = GoogleDriveRealService()
+
+        # Get all folders that system thinks are active
+        active_folders = db.query(models.DriveFolder).filter(
+            models.DriveFolder.deleted_at.is_(None)
+        ).all()
+
+        for folder in active_folders:
+            try:
+                # Try fetching from Google
+                g_file = drive_service.get_file(folder.folder_id)
+                
+                # Check if trashed
+                if g_file.get('trashed') is True:
+                    logger.info(f"Reconcile: Found trashed folder {folder.folder_id}, updating DB.")
+                    folder.deleted_at = datetime.now(timezone.utc)
+                    folder.delete_reason = "reconciled_trash"
+                    folder.deleted_by = "system"
+                    db.commit()
+                    
+            except Exception as e:
+                # If 404, folder is gone permanently
+                if "404" in str(e) or "File not found" in str(e):
+                    logger.info(f"Reconcile: Folder {folder.folder_id} not found in Drive, marking deleted.")
+                    folder.deleted_at = datetime.now(timezone.utc)
+                    folder.delete_reason = "reconciled_missing"
+                    folder.deleted_by = "system"
+                    db.commit()
+                else:
+                    # Other errors (network, auth), log and skip
+                    logger.warning(f"Reconcile check failed for {folder.folder_id}: {e}")
 
 scheduler_service = SchedulerService()

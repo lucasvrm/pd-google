@@ -141,7 +141,6 @@ class HierarchyService:
             print(f"Warning: Deal {deal_id} has no company_id. Creating in root.")
             folder_name = f"Deal - {deal.title}"
             folder = self.drive_service.create_folder(name=folder_name) # Root
-            # Note: No parent_id logic for root creation here, implies root of drive or specific folder logic needed
         else:
             # Ensure Company Structure
             company_folder = self.ensure_company_structure(deal.company_id)
@@ -231,3 +230,45 @@ class HierarchyService:
         ts.apply_template("lead", folder["id"])
 
         return new_mapping
+
+    def sync_folder_name(self, entity_type: str, entity_id: str) -> None:
+        """
+        Verifies if the entity name in DB matches the folder name in Drive.
+        If different, renames the folder in Drive.
+        Should be called by the application whenever an entity is updated.
+        """
+        # 1. Fetch mapped folder
+        mapping = self.db.query(models.DriveFolder).filter_by(
+            entity_type=entity_type, 
+            entity_id=entity_id
+        ).first()
+        
+        if not mapping:
+            return # Nothing to do if no folder exists
+            
+        # 2. Fetch updated entity name from DB
+        entity_name = None
+        if entity_type == "company":
+            ent = self.db.query(models.Company).filter_by(id=entity_id).first()
+            if ent: entity_name = ent.name
+        elif entity_type == "deal":
+            ent = self.db.query(models.Deal).filter_by(id=entity_id).first()
+            if ent: entity_name = f"Deal - {ent.title}"
+        elif entity_type == "lead":
+            ent = self.db.query(models.Lead).filter_by(id=entity_id).first()
+            if ent: entity_name = f"Lead - {ent.title}"
+            
+        if not entity_name:
+            return
+
+        # 3. Fetch real name from Google Drive
+        try:
+            drive_file = self.drive_service.get_file(mapping.folder_id)
+            current_drive_name = drive_file.get('name')
+            
+            # 4. Compare and Update if needed
+            if current_drive_name != entity_name:
+                print(f"Renaming folder {mapping.folder_id}: '{current_drive_name}' -> '{entity_name}'")
+                self.drive_service.update_file_metadata(mapping.folder_id, entity_name)
+        except Exception as e:
+            print(f"Error syncing folder name: {e}")

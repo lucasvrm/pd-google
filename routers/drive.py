@@ -52,6 +52,10 @@ class DriveResponse(BaseModel):
 class CreateFolderRequest(BaseModel):
     name: str
 
+class SyncNameRequest(BaseModel):
+    entity_type: str
+    entity_id: str
+
 def get_db():
     db = SessionLocal()
     try:
@@ -663,3 +667,25 @@ def search_files_and_folders(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/drive/sync-name")
+def sync_folder_name_endpoint(
+    payload: SyncNameRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    """
+    Endpoint para forçar a sincronização do nome da pasta no Drive
+    com o nome atual da entidade no Banco de Dados.
+    Deve ser chamado pelo Frontend após editar um Lead/Deal/Company.
+    """
+    try:
+        hierarchy_service = HierarchyService(db)
+        hierarchy_service.sync_folder_name(payload.entity_type, payload.entity_id)
+        return {"status": "synced", "message": "Folder name synchronization triggered"}
+    except Exception as e:
+        # Logamos o erro, mas retornamos 200 ou um aviso suave para não quebrar o fluxo do frontend
+        # pois isso é uma operação secundária.
+        print(f"Sync endpoint error: {e}")
+        return {"status": "error", "detail": str(e)}
