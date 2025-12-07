@@ -82,3 +82,31 @@ class TemplateService:
 
         # Start with root nodes
         create_nodes_recursive(queue, root_folder_id)
+
+# Helper for Background Tasks
+def run_apply_template_background(entity_type: str, root_folder_id: str):
+    """
+    Standalone function to be run in background tasks.
+    Creates its own DB session and Drive Service.
+    """
+    from database import SessionLocal
+    from config import config
+    from services.google_drive_mock import GoogleDriveService
+    from services.google_drive_real import GoogleDriveRealService
+
+    print(f"Starting background template application for {entity_type} in {root_folder_id}")
+
+    db = SessionLocal()
+    try:
+        if config.USE_MOCK_DRIVE:
+            drive_service = GoogleDriveService()
+        else:
+            drive_service = GoogleDriveRealService()
+
+        ts = TemplateService(db, drive_service)
+        ts.apply_template(entity_type, root_folder_id)
+        print(f"Completed background template application for {entity_type}")
+    except Exception as e:
+        print(f"Error in background template application: {e}")
+    finally:
+        db.close()
