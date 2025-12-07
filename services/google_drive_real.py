@@ -26,7 +26,11 @@ class GoogleDriveRealService:
         if parent_id:
             file_metadata['parents'] = [parent_id]
 
-        file = self.service.files().create(body=file_metadata, fields='id, name, mimeType, parents, createdTime').execute()
+        file = self.service.files().create(
+            body=file_metadata,
+            fields='id, name, mimeType, parents, createdTime',
+            supportsAllDrives=True
+        ).execute()
         
         # Invalidate cache for parent folder listing
         if parent_id:
@@ -47,7 +51,8 @@ class GoogleDriveRealService:
         file = self.service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id, name, mimeType, parents, size, createdTime, webViewLink'
+            fields='id, name, mimeType, parents, size, createdTime, webViewLink',
+            supportsAllDrives=True
         ).execute()
         
         # Invalidate cache for parent folder listing
@@ -70,7 +75,9 @@ class GoogleDriveRealService:
         results = self.service.files().list(
             q=query,
             pageSize=100,
-            fields="nextPageToken, files(id, name, mimeType, parents, webViewLink, createdTime, size)"
+            fields="nextPageToken, files(id, name, mimeType, parents, webViewLink, createdTime, size)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
         ).execute()
 
         files = results.get('files', [])
@@ -82,7 +89,11 @@ class GoogleDriveRealService:
 
     def get_file(self, file_id: str) -> Dict[str, Any]:
         self._check_auth()
-        return self.service.files().get(fileId=file_id, fields='id, name, mimeType, parents, webViewLink, createdTime, size').execute()
+        return self.service.files().get(
+            fileId=file_id,
+            fields='id, name, mimeType, parents, webViewLink, createdTime, size',
+            supportsAllDrives=True
+        ).execute()
 
     def add_permission(self, file_id: str, role: str, email: str, type: str = 'user'):
         """
@@ -98,5 +109,6 @@ class GoogleDriveRealService:
         return self.service.permissions().create(
             fileId=file_id,
             body=permission,
-            fields='id'
+            fields='id',
+            supportsAllDrives=True
         ).execute()
