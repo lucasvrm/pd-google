@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Header, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from services.google_drive_mock import GoogleDriveService
@@ -68,6 +68,7 @@ def get_db():
 def get_entity_drive(
     entity_type: str,
     entity_id: str,
+    background_tasks: BackgroundTasks,
     include_deleted: bool = Query(default=False, description="Include soft-deleted items in the response"),
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=50, ge=1, le=200, description="Items per page"),
@@ -86,11 +87,11 @@ def get_entity_drive(
         entity_folder = None
 
         if entity_type == "company":
-            entity_folder = hierarchy_service.ensure_company_structure(entity_id)
+            entity_folder = hierarchy_service.ensure_company_structure(entity_id, background_tasks=background_tasks)
         elif entity_type == "lead":
-            entity_folder = hierarchy_service.ensure_lead_structure(entity_id)
+            entity_folder = hierarchy_service.ensure_lead_structure(entity_id, background_tasks=background_tasks)
         elif entity_type == "deal":
-            entity_folder = hierarchy_service.ensure_deal_structure(entity_id)
+            entity_folder = hierarchy_service.ensure_deal_structure(entity_id, background_tasks=background_tasks)
 
         if not entity_folder:
             raise HTTPException(status_code=500, detail="Failed to resolve/create folder structure")

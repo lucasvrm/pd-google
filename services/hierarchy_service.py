@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from typing import Optional, Any
 import models
 from services.google_drive_mock import GoogleDriveService
 from services.google_drive_real import GoogleDriveRealService
@@ -21,6 +22,21 @@ class HierarchyService:
         self.db = db
         self.drive_service = get_drive_service()
 
+    def _validate_mapping(self, mapping: models.DriveFolder) -> bool:
+        """
+        Checks if the mapped folder actually exists in Drive and is not trashed.
+        """
+        try:
+            # get_file should return dict or raise Exception if 404
+            f = self.drive_service.get_file(mapping.folder_id)
+            if f.get('trashed'):
+                print(f"Mapping {mapping.entity_type}/{mapping.entity_id} points to TRASHED folder.")
+                return False
+            return True
+        except Exception as e:
+            print(f"Mapping {mapping.entity_type}/{mapping.entity_id} is INVALID (Ghost): {e}")
+            return False
+
     def get_or_create_companies_root(self) -> models.DriveFolder:
         """
         Ensures the root folder '/Companies' exists.
@@ -35,7 +51,11 @@ class HierarchyService:
         ).first()
 
         if mapped_root:
-            return mapped_root
+            if self._validate_mapping(mapped_root):
+                return mapped_root
+            else:
+                self.db.delete(mapped_root)
+                self.db.commit()
 
         if not config.DRIVE_ROOT_FOLDER_ID:
             raise ValueError("DRIVE_ROOT_FOLDER_ID not configured. Operations require a strict Shared Drive root.")
@@ -76,7 +96,7 @@ class HierarchyService:
         
         return new_mapping
 
-    def ensure_company_structure(self, company_id: str) -> models.DriveFolder:
+    def ensure_company_structure(self, company_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
         Ensures '/Companies/[Company Name]' exists.
         """
@@ -85,8 +105,13 @@ class HierarchyService:
             entity_type="company",
             entity_id=company_id
         ).first()
+
         if existing:
-            return existing
+            if self._validate_mapping(existing):
+                return existing
+            else:
+                self.db.delete(existing)
+                self.db.commit()
 
         # 2. Get Company Name from Supabase DB
         company = self.db.query(models.Company).filter_by(id=company_id).first()
@@ -115,13 +140,18 @@ class HierarchyService:
         self.db.refresh(new_mapping)
 
         # 6. Apply Template
-        from services.template_service import TemplateService
-        ts = TemplateService(self.db, self.drive_service)
-        ts.apply_template("company", folder["id"])
+        from services.template_service import TemplateService, run_apply_template_background
+
+        if background_tasks:
+            print(f"Queueing background template for company {company_id}")
+            background_tasks.add_task(run_apply_template_background, "company", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("company", folder["id"])
 
         return new_mapping
 
-    def ensure_deal_structure(self, deal_id: str) -> models.DriveFolder:
+    def ensure_deal_structure(self, deal_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
         Ensures '/Companies/[Company]/02. Deals/Deal - [Name]' exists.
         """
@@ -129,8 +159,13 @@ class HierarchyService:
             entity_type="deal",
             entity_id=deal_id
         ).first()
+
         if existing:
-            return existing
+            if self._validate_mapping(existing):
+                return existing
+            else:
+                self.db.delete(existing)
+                self.db.commit()
 
         # Get Deal info
         deal = self.db.query(models.Deal).filter_by(id=deal_id).first()
@@ -139,26 +174,22 @@ class HierarchyService:
 
         if not deal.company_id:
             print(f"Warning: Deal {deal_id} has no company_id. Creating in root.")
-            folder_name = f"Deal - {getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))}"
+            deal_name = getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))
+            folder_name = f"Deal - {deal_name}"
             folder = self.drive_service.create_folder(name=folder_name) # Root
         else:
             # Ensure Company Structure
-            company_folder = self.ensure_company_structure(deal.company_id)
+            # We pass background_tasks here too, so if company is created fresh, its template is backgrounded
+            company_folder = self.ensure_company_structure(deal.company_id, background_tasks=background_tasks)
 
             # Find '02. Deals' folder inside Company Folder
-            children = self.drive_service.list_files(company_folder.folder_id)
-            deals_folder_id = None
-            for child in children:
-                if "02. Deals" in child['name']:
-                    deals_folder_id = child['id']
-                    break
+            # Note: If company template is running in background, '02. Deals' might not exist yet!
+            # We need to use get_or_create_folder here to be safe/idempotent.
 
-            if not deals_folder_id:
-                print("Repairing: Creating '02. Deals' folder")
-                f = self.drive_service.create_folder("02. Deals", parent_id=company_folder.folder_id)
-                deals_folder_id = f['id']
+            # Using get_or_create from Drive Service directly is safer than listing manually
+            deals_folder = self.drive_service.get_or_create_folder("02. Deals", parent_id=company_folder.folder_id)
+            deals_folder_id = deals_folder['id']
 
-            # CORREÇÃO: Usar client_name ou fallback seguro
             deal_name = getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))
             folder_name = f"Deal - {deal_name}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
@@ -174,13 +205,18 @@ class HierarchyService:
         self.db.commit()
 
         # Apply Template
-        from services.template_service import TemplateService
-        ts = TemplateService(self.db, self.drive_service)
-        ts.apply_template("deal", folder["id"])
+        from services.template_service import TemplateService, run_apply_template_background
+
+        if background_tasks:
+            print(f"Queueing background template for deal {deal_id}")
+            background_tasks.add_task(run_apply_template_background, "deal", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("deal", folder["id"])
 
         return new_mapping
 
-    def ensure_lead_structure(self, lead_id: str) -> models.DriveFolder:
+    def ensure_lead_structure(self, lead_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
         Ensures '/Companies/[Company]/01. Leads/Lead - [Name]' exists.
         """
@@ -188,8 +224,13 @@ class HierarchyService:
             entity_type="lead",
             entity_id=lead_id
         ).first()
+
         if existing:
-            return existing
+            if self._validate_mapping(existing):
+                return existing
+            else:
+                self.db.delete(existing)
+                self.db.commit()
 
         lead = self.db.query(models.Lead).filter_by(id=lead_id).first()
         if not lead:
@@ -203,20 +244,11 @@ class HierarchyService:
             folder_name = f"Lead - {lead_name}"
             folder = self.drive_service.create_folder(name=folder_name)
         else:
-            company_folder = self.ensure_company_structure(lead.company_id)
+            company_folder = self.ensure_company_structure(lead.company_id, background_tasks=background_tasks)
 
-            # Find '01. Leads'
-            children = self.drive_service.list_files(company_folder.folder_id)
-            leads_folder_id = None
-            for child in children:
-                if "01. Leads" in child['name']:
-                    leads_folder_id = child['id']
-                    break
-
-            if not leads_folder_id:
-                print("Repairing: Creating '01. Leads' folder")
-                f = self.drive_service.create_folder("01. Leads", parent_id=company_folder.folder_id)
-                leads_folder_id = f['id']
+            # Idempotent get_or_create for "01. Leads" in case company template is lagging
+            leads_folder = self.drive_service.get_or_create_folder("01. Leads", parent_id=company_folder.folder_id)
+            leads_folder_id = leads_folder['id']
 
             folder_name = f"Lead - {lead_name}"
             folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
@@ -230,9 +262,14 @@ class HierarchyService:
         self.db.add(new_mapping)
         self.db.commit()
 
-        from services.template_service import TemplateService
-        ts = TemplateService(self.db, self.drive_service)
-        ts.apply_template("lead", folder["id"])
+        from services.template_service import TemplateService, run_apply_template_background
+
+        if background_tasks:
+            print(f"Queueing background template for lead {lead_id}")
+            background_tasks.add_task(run_apply_template_background, "lead", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("lead", folder["id"])
 
         return new_mapping
 
