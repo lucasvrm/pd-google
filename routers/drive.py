@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Header, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Header, Query, BackgroundTasks, Form
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from services.google_drive_mock import GoogleDriveService
@@ -48,9 +48,14 @@ class DriveResponse(BaseModel):
     page_size: int
     total_pages: int
     permission: str
+    breadcrumbs: List[Dict[str, str]] = []
 
 class CreateFolderRequest(BaseModel):
     name: str
+    parent_id: Optional[str] = None
+
+class RenameFileRequest(BaseModel):
+    new_name: str
 
 class SyncNameRequest(BaseModel):
     entity_type: str
@@ -69,6 +74,7 @@ def get_entity_drive(
     entity_type: str,
     entity_id: str,
     background_tasks: BackgroundTasks,
+    folder_id: Optional[str] = Query(None, description="Specific folder ID to list content from. Must be within the entity's hierarchy."),
     include_deleted: bool = Query(default=False, description="Include soft-deleted items in the response"),
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=50, ge=1, le=200, description="Items per page"),
@@ -78,7 +84,6 @@ def get_entity_drive(
     try:
         # 0. Validate Entity Type
         allowed_types = ["company", "lead", "deal"]
-        # 'contact' commented out for now as per instructions
         if entity_type not in allowed_types:
             raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
 
@@ -97,12 +102,19 @@ def get_entity_drive(
             raise HTTPException(status_code=500, detail="Failed to resolve/create folder structure")
 
         root_id = entity_folder.folder_id
+        target_id = root_id
 
-        # 2. List contents of this folder
-        # Note: This loads all files into memory. Pagination should ideally move to service layer.
-        items = drive_service.list_files(root_id)
+        # 2. Handle Subfolder Navigation (Security Check)
+        if folder_id and folder_id != root_id:
+            # Verify lineage: folder_id must be a descendant of root_id
+            if not drive_service.is_descendant(folder_id, root_id):
+                raise HTTPException(status_code=403, detail="Access denied: Folder is not part of this entity's hierarchy.")
+            target_id = folder_id
 
-        # 3. Filter out soft-deleted items unless include_deleted=True
+        # 3. List contents of target folder
+        items = drive_service.list_files(target_id)
+
+        # 4. Filter out soft-deleted items unless include_deleted=True
         if not include_deleted:
             # Get IDs of soft-deleted files and folders from database
             deleted_file_ids = {
@@ -122,13 +134,13 @@ def get_entity_drive(
                 if item.get("id") not in deleted_file_ids and item.get("id") not in deleted_folder_ids
             ]
 
-        # 4. Determine permissions
+        # 5. Determine permissions
         perm_service = PermissionService(db)
         permission = perm_service.get_drive_permission_from_app_role(
             current_user.role, entity_type
         )
 
-        # 5. Transform to DriveItem schema
+        # 6. Transform to DriveItem schema
         drive_items = []
         for item in items:
             # Determine type
@@ -146,15 +158,15 @@ def get_entity_drive(
                 type=item_type
             ))
 
-        # 6. Pagination
+        # 7. Pagination
         total = len(drive_items)
         start = (page - 1) * page_size
         end = start + page_size
         paginated_items = drive_items[start:end]
         total_pages = math.ceil(total / page_size) if page_size > 0 else 1
 
-        # Log operation
-        # logger.info(...) can be added here if logging is configured globally or passed as dep
+        # 8. Breadcrumbs
+        breadcrumbs = drive_service.get_breadcrumbs(target_id, root_id)
 
         return DriveResponse(
             files=paginated_items,
@@ -162,14 +174,13 @@ def get_entity_drive(
             page=page,
             page_size=page_size,
             total_pages=total_pages,
-            permission=permission
+            permission=permission,
+            breadcrumbs=breadcrumbs
         )
 
     except HTTPException:
-        # Re-raise HTTPExceptions without change
         raise
     except ValueError as ve:
-        # Catch errors from HierarchyService (e.g. Lead not found in DB)
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
         traceback.print_exc()
@@ -200,10 +211,7 @@ def create_subfolder(
         )
 
     # 2. Get root folder
-    # We use HierarchyService to ensure it exists if called (idempotent)
     hierarchy_service = HierarchyService(db)
-    # We could call ensure_..._structure here again, but usually GET is called first.
-    # To be safe, let's query the DB mapping directly.
     entity_folder = (
         db.query(models.DriveFolder)
         .filter(
@@ -219,19 +227,28 @@ def create_subfolder(
             detail="Entity root folder not found. Call list (GET) first to initialize structure.",
         )
 
-    # 3. Create folder in Drive
+    # 3. Determine Parent Folder
+    target_parent_id = entity_folder.folder_id
+    if request.parent_id and request.parent_id != target_parent_id:
+        # Validate Lineage
+        if not drive_service.is_descendant(request.parent_id, entity_folder.folder_id):
+            raise HTTPException(status_code=403, detail="Invalid parent folder. Must be within the entity's hierarchy.")
+        target_parent_id = request.parent_id
+
+    # 4. Create folder in Drive
     new_folder = drive_service.create_folder(
-        request.name, parent_id=entity_folder.folder_id
+        request.name, parent_id=target_parent_id
     )
 
-    # 4. Log Audit
+    # 5. Log Audit
     audit_metadata = {
         "user_id": current_user.id,
         "user_role": current_user.role,
         "action": "create_subfolder",
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "folder_name": request.name
+        "folder_name": request.name,
+        "parent_id": target_parent_id
     }
     audit_entry = models.DriveChangeLog(
         channel_id="api_action",
@@ -252,6 +269,7 @@ async def upload_file(
     entity_type: str,
     entity_id: str,
     file: UploadFile = File(...),
+    parent_id: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
 ):
@@ -286,21 +304,29 @@ async def upload_file(
             detail="Entity root folder not found. Call list (GET) first to initialize structure.",
         )
 
-    # 3. Read file content
+    # 3. Determine Parent Folder
+    target_parent_id = entity_folder.folder_id
+    if parent_id and parent_id != target_parent_id:
+        # Validate Lineage
+        if not drive_service.is_descendant(parent_id, entity_folder.folder_id):
+            raise HTTPException(status_code=403, detail="Invalid parent folder. Must be within the entity's hierarchy.")
+        target_parent_id = parent_id
+
+    # 4. Read file content
     content = await file.read()
 
-    # 4. Upload to Drive
+    # 5. Upload to Drive
     uploaded_file = drive_service.upload_file(
         file_content=content,
         name=file.filename,
         mime_type=file.content_type or "application/octet-stream",
-        parent_id=entity_folder.folder_id,
+        parent_id=target_parent_id,
     )
 
-    # 5. Save metadata in local DB (Optional for MVP, but good practice)
+    # 6. Save metadata in local DB (Optional for MVP, but good practice)
     new_file_record = models.DriveFile(
         file_id=uploaded_file["id"],
-        parent_folder_id=entity_folder.folder_id,
+        parent_folder_id=target_parent_id,
         name=uploaded_file["name"],
         mime_type=uploaded_file["mimeType"],
         size=uploaded_file["size"],
@@ -308,14 +334,15 @@ async def upload_file(
     db.add(new_file_record)
     db.commit()
 
-    # 6. Log Audit
+    # 7. Log Audit
     audit_metadata = {
         "user_id": current_user.id,
         "user_role": current_user.role,
         "action": "upload_file",
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "file_name": file.filename
+        "file_name": file.filename,
+        "parent_id": target_parent_id
     }
     audit_entry = models.DriveChangeLog(
         channel_id="api_action",
@@ -329,6 +356,113 @@ async def upload_file(
     db.commit()
 
     return uploaded_file
+
+@router.put("/drive/{entity_type}/{entity_id}/files/{file_id}/rename")
+def rename_file(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    request: RenameFileRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    """
+    Rename a file or folder in Google Drive.
+    Checks lineage to ensure the file belongs to the entity.
+    """
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    # 1. Check permission (writer or owner)
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(
+            status_code=403, detail="User does not have permission to rename files"
+        )
+
+    # 2. Get root folder
+    entity_folder = (
+        db.query(models.DriveFolder)
+        .filter(
+            models.DriveFolder.entity_type == entity_type,
+            models.DriveFolder.entity_id == entity_id,
+        )
+        .first()
+    )
+
+    if not entity_folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Entity root folder not found.",
+        )
+
+    # 3. Verify File Lineage
+    # We need to know if the file's parent is within the hierarchy
+    # get_file returns parents list
+    try:
+        file_meta = drive_service.get_file(file_id)
+        parents = file_meta.get('parents', [])
+
+        if not parents:
+            # If no parents, it's orphan or root (if root, can we rename? Maybe not root entity folder)
+            if file_id == entity_folder.folder_id:
+                 raise HTTPException(status_code=403, detail="Cannot rename the root entity folder via this endpoint.")
+            # For orphans, we block
+            raise HTTPException(status_code=403, detail="File is orphaned or inaccessible.")
+
+        parent_id = parents[0]
+        if not drive_service.is_descendant(parent_id, entity_folder.folder_id) and parent_id != entity_folder.folder_id:
+             raise HTTPException(status_code=403, detail="File does not belong to this entity's hierarchy.")
+
+    except Exception as e:
+        # If get_file fails, return 404 or 500
+        if "404" in str(e):
+             raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # 4. Perform Rename
+    updated_file = drive_service.update_file_metadata(file_id, request.new_name)
+
+    # 5. Update local DB if exists
+    # If it's a file
+    file_record = db.query(models.DriveFile).filter(models.DriveFile.file_id == file_id).first()
+    if file_record:
+        file_record.name = request.new_name
+        db.commit()
+
+    # If it's a mapped folder (unlikely to rename subfolders mapped in DB, but possible)
+    folder_record = db.query(models.DriveFolder).filter(models.DriveFolder.folder_id == file_id).first()
+    if folder_record:
+        # We don't store folder name in DriveFolder currently (only entity name in related table), but if we did...
+        pass
+
+    # 6. Log Audit
+    audit_metadata = {
+        "user_id": current_user.id,
+        "user_role": current_user.role,
+        "action": "rename_file",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "file_id": file_id,
+        "new_name": request.new_name
+    }
+    audit_entry = models.DriveChangeLog(
+        channel_id="api_action",
+        resource_id=file_id,
+        resource_state="updated",
+        changed_resource_id=file_id,
+        event_type="file_rename",
+        raw_headers=json.dumps(audit_metadata),
+    )
+    db.add(audit_entry)
+    db.commit()
+
+    return updated_file
 
 
 @router.delete("/drive/{entity_type}/{entity_id}/files/{file_id}")

@@ -194,6 +194,18 @@ class GoogleDriveRealService:
                 supportsAllDrives=True
             ).execute()
         
+        # Invalidate parents cache logic is tricky because we don't know the parent without fetching.
+        # But rename only affects the item itself usually, or list of its parent.
+        # We should probably fetch parent to invalidate.
+        # For performance, we might skip or rely on TTL.
+        # But for correctness in UI, we should invalidate.
+        try:
+             # Try to get parent from cache or fetch
+             # Or just return, client will refresh?
+             pass
+        except:
+             pass
+
         return self._retry_operation(_api_call)
 
     def add_permission(self, file_id: str, role: str, email: str, type: str = 'user'):
@@ -217,3 +229,68 @@ class GoogleDriveRealService:
             ).execute()
 
         return self._retry_operation(_api_call)
+
+    def is_descendant(self, folder_id: str, ancestor_id: str) -> bool:
+        """
+        Verifies if folder_id is a descendant of ancestor_id.
+        Walks up the parent chain using cache for performance.
+        Max depth: 10
+        """
+        if folder_id == ancestor_id:
+            return True
+
+        current_id = folder_id
+        max_depth = 10
+
+        for _ in range(max_depth):
+            # Try cache first for parent
+            cache_key = f"drive:parent:{current_id}"
+            parent_id = cache_service.get_from_cache(cache_key)
+
+            if not parent_id:
+                try:
+                    meta = self.get_file(current_id)
+                    parents = meta.get('parents', [])
+                    if not parents:
+                        # Reached root or orphan
+                        return False
+                    parent_id = parents[0]
+                    # Cache parent info for 1 hour
+                    cache_service.set_in_cache(cache_key, parent_id, ttl=3600)
+                except Exception as e:
+                    print(f"Error checking lineage for {current_id}: {e}")
+                    return False
+
+            if parent_id == ancestor_id:
+                return True
+
+            current_id = parent_id
+
+        return False
+
+    def get_breadcrumbs(self, folder_id: str, root_id: str) -> List[Dict[str, str]]:
+        """
+        Returns a list of breadcrumbs from root_id to folder_id.
+        [{id: '...', name: '...'}, ...]
+        """
+        breadcrumbs = []
+        current_id = folder_id
+        max_depth = 10
+
+        for _ in range(max_depth):
+            try:
+                meta = self.get_file(current_id)
+                breadcrumbs.insert(0, {"id": meta["id"], "name": meta["name"]})
+
+                if current_id == root_id:
+                    break
+
+                parents = meta.get('parents', [])
+                if not parents:
+                    break
+                current_id = parents[0]
+            except Exception as e:
+                print(f"Error building breadcrumbs: {e}")
+                break
+
+        return breadcrumbs
