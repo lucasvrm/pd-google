@@ -38,6 +38,58 @@ class HierarchyService:
             print(f"Mapping {mapping.entity_type}/{mapping.entity_id} is INVALID (Ghost): {e}")
             return False
 
+    def _find_existing_folder(self, parent_id: str, folder_name: str) -> Optional[dict]:
+        """
+        Helper method to check if a folder with the given name exists in the parent.
+        Returns the folder metadata if found, None otherwise.
+        """
+        try:
+            children = self.drive_service.list_files(parent_id)
+            for file in children:
+                if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                    print(f"Found existing folder '{folder_name}' in parent {parent_id}: {file['id']}")
+                    return file
+        except Exception as e:
+            print(f"Warning: Could not list files in parent folder {parent_id}: {e}")
+        return None
+
+    def _handle_mapping_race_condition(self, entity_type: str, entity_id: str, new_mapping: models.DriveFolder) -> models.DriveFolder:
+        """
+        Helper method to handle IntegrityError when saving a mapping.
+        Returns the existing mapping on race condition, or raises if unexpected.
+        """
+        try:
+            self.db.add(new_mapping)
+            self.db.commit()
+            self.db.refresh(new_mapping)
+            return new_mapping
+        except IntegrityError:
+            # Race condition: another process created the mapping
+            print(f"Race condition detected: mapping already exists for {entity_type} {entity_id}")
+            self.db.rollback()
+            # Query for the existing record
+            existing_mapping = self.db.query(models.DriveFolder).filter_by(
+                entity_type=entity_type,
+                entity_id=entity_id
+            ).first()
+            if existing_mapping:
+                return existing_mapping
+            else:
+                # Unexpected case, re-raise
+                raise
+
+    def _get_or_create_structural_folder(self, name: str, parent_id: str) -> str:
+        """
+        Helper method to get or create structural folders like '01. Leads' or '02. Deals'.
+        Returns the folder ID.
+        """
+        existing_folder = self._find_existing_folder(parent_id, name)
+        if existing_folder:
+            return existing_folder['id']
+        else:
+            folder = self.drive_service.create_folder(name, parent_id=parent_id)
+            return folder['id']
+
     def get_or_create_companies_root(self) -> models.DriveFolder:
         """
         Ensures the root folder '/Companies' exists.
@@ -127,16 +179,7 @@ class HierarchyService:
 
         # 4. Check if folder already exists in Drive before creating
         print(f"Checking for existing Company Folder: {folder_name}")
-        existing_folder = None
-        try:
-            children = self.drive_service.list_files(companies_root.folder_id)
-            for file in children:
-                if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
-                    existing_folder = file
-                    print(f"Found existing Company Folder in Drive: {existing_folder['id']}")
-                    break
-        except Exception as e:
-            print(f"Warning: Could not list files in parent folder: {e}")
+        existing_folder = self._find_existing_folder(companies_root.folder_id, folder_name)
 
         # 5. Create Folder only if it doesn't exist
         if existing_folder:
@@ -153,36 +196,20 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        try:
-            self.db.add(new_mapping)
-            self.db.commit()
-            self.db.refresh(new_mapping)
-        except IntegrityError:
-            # Race condition: another process created the mapping
-            print(f"Race condition detected: mapping already exists for company {company_id}")
-            self.db.rollback()
-            # Query for the existing record
-            existing_mapping = self.db.query(models.DriveFolder).filter_by(
-                entity_type="company",
-                entity_id=company_id
-            ).first()
-            if existing_mapping:
-                return existing_mapping
+        result = self._handle_mapping_race_condition("company", company_id, new_mapping)
+
+        # 7. Apply Template (only if we just created the mapping)
+        if result == new_mapping:
+            from services.template_service import TemplateService, run_apply_template_background
+
+            if background_tasks:
+                print(f"Queueing background template for company {company_id}")
+                background_tasks.add_task(run_apply_template_background, "company", folder["id"])
             else:
-                # Unexpected case, re-raise
-                raise
+                ts = TemplateService(self.db, self.drive_service)
+                ts.apply_template("company", folder["id"])
 
-        # 7. Apply Template
-        from services.template_service import TemplateService, run_apply_template_background
-
-        if background_tasks:
-            print(f"Queueing background template for company {company_id}")
-            background_tasks.add_task(run_apply_template_background, "company", folder["id"])
-        else:
-            ts = TemplateService(self.db, self.drive_service)
-            ts.apply_template("company", folder["id"])
-
-        return new_mapping
+        return result
 
     def ensure_deal_structure(self, deal_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
@@ -212,45 +239,17 @@ class HierarchyService:
             folder = self.drive_service.create_folder(name=folder_name) # Root
         else:
             # Ensure Company Structure
-            # We pass background_tasks here too, so if company is created fresh, its template is backgrounded
             company_folder = self.ensure_company_structure(deal.company_id, background_tasks=background_tasks)
 
-            # Find or create '02. Deals' folder inside Company Folder
-            # Check if it exists first to prevent duplicates
-            print(f"Checking for existing '02. Deals' folder in company {deal.company_id}")
-            deals_folder_data = None
-            try:
-                children = self.drive_service.list_files(company_folder.folder_id)
-                for file in children:
-                    if file.get('name') == "02. Deals" and file.get('mimeType') == 'application/vnd.google-apps.folder':
-                        deals_folder_data = file
-                        print(f"Found existing '02. Deals' folder: {deals_folder_data['id']}")
-                        break
-            except Exception as e:
-                print(f"Warning: Could not list files in company folder: {e}")
+            # Get or create '02. Deals' folder
+            deals_folder_id = self._get_or_create_structural_folder("02. Deals", company_folder.folder_id)
 
-            # Create '02. Deals' folder only if it doesn't exist
-            if deals_folder_data:
-                deals_folder_id = deals_folder_data['id']
-            else:
-                deals_folder = self.drive_service.create_folder("02. Deals", parent_id=company_folder.folder_id)
-                deals_folder_id = deals_folder['id']
-
-            # Now check if the Deal folder already exists
+            # Check if the Deal folder already exists
             deal_name = getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))
             folder_name = f"Deal - {deal_name}"
             
             print(f"Checking for existing Deal Folder: {folder_name}")
-            existing_deal_folder = None
-            try:
-                deal_children = self.drive_service.list_files(deals_folder_id)
-                for file in deal_children:
-                    if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
-                        existing_deal_folder = file
-                        print(f"Found existing Deal Folder in Drive: {existing_deal_folder['id']}")
-                        break
-            except Exception as e:
-                print(f"Warning: Could not list files in deals folder: {e}")
+            existing_deal_folder = self._find_existing_folder(deals_folder_id, folder_name)
 
             # Create Deal folder only if it doesn't exist
             if existing_deal_folder:
@@ -266,36 +265,20 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        try:
-            self.db.add(new_mapping)
-            self.db.commit()
-            self.db.refresh(new_mapping)
-        except IntegrityError:
-            # Race condition: another process created the mapping
-            print(f"Race condition detected: mapping already exists for deal {deal_id}")
-            self.db.rollback()
-            # Query for the existing record
-            existing_mapping = self.db.query(models.DriveFolder).filter_by(
-                entity_type="deal",
-                entity_id=deal_id
-            ).first()
-            if existing_mapping:
-                return existing_mapping
+        result = self._handle_mapping_race_condition("deal", deal_id, new_mapping)
+
+        # Apply Template (only if we just created the mapping)
+        if result == new_mapping:
+            from services.template_service import TemplateService, run_apply_template_background
+
+            if background_tasks:
+                print(f"Queueing background template for deal {deal_id}")
+                background_tasks.add_task(run_apply_template_background, "deal", folder["id"])
             else:
-                # Unexpected case, re-raise
-                raise
+                ts = TemplateService(self.db, self.drive_service)
+                ts.apply_template("deal", folder["id"])
 
-        # Apply Template
-        from services.template_service import TemplateService, run_apply_template_background
-
-        if background_tasks:
-            print(f"Queueing background template for deal {deal_id}")
-            background_tasks.add_task(run_apply_template_background, "deal", folder["id"])
-        else:
-            ts = TemplateService(self.db, self.drive_service)
-            ts.apply_template("deal", folder["id"])
-
-        return new_mapping
+        return result
 
     def ensure_lead_structure(self, lead_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
@@ -327,40 +310,14 @@ class HierarchyService:
         else:
             company_folder = self.ensure_company_structure(lead.company_id, background_tasks=background_tasks)
 
-            # Check if '01. Leads' folder exists before creating
-            print(f"Checking for existing '01. Leads' folder in company {lead.company_id}")
-            leads_folder_data = None
-            try:
-                children = self.drive_service.list_files(company_folder.folder_id)
-                for file in children:
-                    if file.get('name') == "01. Leads" and file.get('mimeType') == 'application/vnd.google-apps.folder':
-                        leads_folder_data = file
-                        print(f"Found existing '01. Leads' folder: {leads_folder_data['id']}")
-                        break
-            except Exception as e:
-                print(f"Warning: Could not list files in company folder: {e}")
+            # Get or create '01. Leads' folder
+            leads_folder_id = self._get_or_create_structural_folder("01. Leads", company_folder.folder_id)
 
-            # Create '01. Leads' folder only if it doesn't exist
-            if leads_folder_data:
-                leads_folder_id = leads_folder_data['id']
-            else:
-                leads_folder = self.drive_service.create_folder("01. Leads", parent_id=company_folder.folder_id)
-                leads_folder_id = leads_folder['id']
-
-            # Now check if the Lead folder already exists
+            # Check if the Lead folder already exists
             folder_name = f"Lead - {lead_name}"
             
             print(f"Checking for existing Lead Folder: {folder_name}")
-            existing_lead_folder = None
-            try:
-                lead_children = self.drive_service.list_files(leads_folder_id)
-                for file in lead_children:
-                    if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
-                        existing_lead_folder = file
-                        print(f"Found existing Lead Folder in Drive: {existing_lead_folder['id']}")
-                        break
-            except Exception as e:
-                print(f"Warning: Could not list files in leads folder: {e}")
+            existing_lead_folder = self._find_existing_folder(leads_folder_id, folder_name)
 
             # Create Lead folder only if it doesn't exist
             if existing_lead_folder:
@@ -376,35 +333,20 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        try:
-            self.db.add(new_mapping)
-            self.db.commit()
-            self.db.refresh(new_mapping)
-        except IntegrityError:
-            # Race condition: another process created the mapping
-            print(f"Race condition detected: mapping already exists for lead {lead_id}")
-            self.db.rollback()
-            # Query for the existing record
-            existing_mapping = self.db.query(models.DriveFolder).filter_by(
-                entity_type="lead",
-                entity_id=lead_id
-            ).first()
-            if existing_mapping:
-                return existing_mapping
+        result = self._handle_mapping_race_condition("lead", lead_id, new_mapping)
+
+        # Apply Template (only if we just created the mapping)
+        if result == new_mapping:
+            from services.template_service import TemplateService, run_apply_template_background
+
+            if background_tasks:
+                print(f"Queueing background template for lead {lead_id}")
+                background_tasks.add_task(run_apply_template_background, "lead", folder["id"])
             else:
-                # Unexpected case, re-raise
-                raise
+                ts = TemplateService(self.db, self.drive_service)
+                ts.apply_template("lead", folder["id"])
 
-        from services.template_service import TemplateService, run_apply_template_background
-
-        if background_tasks:
-            print(f"Queueing background template for lead {lead_id}")
-            background_tasks.add_task(run_apply_template_background, "lead", folder["id"])
-        else:
-            ts = TemplateService(self.db, self.drive_service)
-            ts.apply_template("lead", folder["id"])
-
-        return new_mapping
+        return result
 
     def sync_folder_name(self, entity_type: str, entity_id: str) -> None:
         """
