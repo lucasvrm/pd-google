@@ -31,6 +31,7 @@ MOCK_JSON = "mock_drive_db.json"
 def setup_module(module):
     # Set USE_MOCK_DRIVE to true for tests (though patching config is safer)
     os.environ["USE_MOCK_DRIVE"] = "true"
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
     
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
@@ -50,7 +51,7 @@ def setup_module(module):
     company = models.Company(id="comp-soft-1", name="Soft Delete Test Company")
     db.add(company)
 
-    lead = models.Lead(id="lead-soft-1", title="Soft Delete Test Lead", company_id="comp-soft-1")
+    lead = models.Lead(id="lead-soft-1", title="Soft Delete Test Lead", qualified_company_id="comp-soft-1")
     db.add(lead)
 
     # Create templates
@@ -88,12 +89,12 @@ class TestFileSoftDelete:
     def test_soft_delete_file_success(self, client):
         """Test successful soft delete of a file"""
         # First, initialize structure and upload a file
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-1"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-1"})
         
         # Upload a test file
         file_content = b"Test file content"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "user-1"}
         )
@@ -103,7 +104,7 @@ class TestFileSoftDelete:
         
         # Soft delete the file
         response = client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}?reason=Test%20deletion",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}?reason=Test%20deletion",
             headers={"x-user-role": "admin", "x-user-id": "user-1"}
         )
         assert response.status_code == 200
@@ -116,30 +117,30 @@ class TestFileSoftDelete:
     def test_soft_delete_file_not_in_listing(self, client):
         """Test that soft deleted file doesn't appear in default listing"""
         # Initialize and upload
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
         
         file_content = b"Test file 2"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test2.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "user-2"}
         )
         file_id = response.json()["id"]
         
         # Verify file is in listing before deletion
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
+        response = client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
         files_before = response.json()["files"]
         file_ids_before = [f["id"] for f in files_before]
         assert file_id in file_ids_before
         
         # Soft delete
         client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "user-2"}
         )
         
         # Verify file is NOT in listing after deletion
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
+        response = client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-2"})
         files_after = response.json()["files"]
         file_ids_after = [f["id"] for f in files_after]
         assert file_id not in file_ids_after
@@ -147,11 +148,11 @@ class TestFileSoftDelete:
     def test_soft_delete_file_with_include_deleted(self, client):
         """Test that soft deleted file appears when include_deleted=true"""
         # Upload file
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-3"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-3"})
         
         file_content = b"Test file 3"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test3.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "user-3"}
         )
@@ -159,28 +160,28 @@ class TestFileSoftDelete:
         
         # Soft delete
         client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "user-3"}
         )
         
         # Verify file is NOT in default listing
-        response = client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-3"})
+        response = client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-3"})
         file_ids = [f["id"] for f in response.json()["files"]]
         assert file_id not in file_ids
         
         # Verify file IS in listing with include_deleted=true
-        response = client.get("/drive/lead/lead-soft-1?include_deleted=true", headers={"x-user-role": "admin", "x-user-id": "user-3"})
+        response = client.get("/api/drive/lead/lead-soft-1?include_deleted=true", headers={"x-user-role": "admin", "x-user-id": "user-3"})
         file_ids = [f["id"] for f in response.json()["files"]]
         assert file_id in file_ids
 
     def test_soft_delete_file_permission_denied(self, client):
         """Test that reader role cannot soft delete files"""
         # Upload file as admin
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "admin-user"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "admin-user"})
         
         file_content = b"Test file 4"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test4.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "admin-user"}
         )
@@ -188,7 +189,7 @@ class TestFileSoftDelete:
         
         # Try to delete as reader
         response = client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "client", "x-user-id": "reader-user"}
         )
         assert response.status_code == 403
@@ -197,7 +198,7 @@ class TestFileSoftDelete:
     def test_soft_delete_file_not_found(self, client):
         """Test soft delete of non-existent file"""
         response = client.delete(
-            "/drive/lead/lead-soft-1/files/non-existent-file-id",
+            "/api/drive/lead/lead-soft-1/files/non-existent-file-id",
             headers={"x-user-role": "admin", "x-user-id": "user-5"}
         )
         assert response.status_code == 404
@@ -206,11 +207,11 @@ class TestFileSoftDelete:
     def test_soft_delete_file_already_deleted(self, client):
         """Test soft delete of already deleted file"""
         # Upload file
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-6"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-6"})
         
         file_content = b"Test file 5"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test5.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "user-6"}
         )
@@ -218,14 +219,14 @@ class TestFileSoftDelete:
         
         # First deletion
         response = client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "user-6"}
         )
         assert response.status_code == 200
         
         # Second deletion attempt
         response = client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "user-6"}
         )
         assert response.status_code == 400
@@ -234,11 +235,11 @@ class TestFileSoftDelete:
     def test_soft_delete_file_writer_role(self, client):
         """Test that writer role can soft delete files"""
         # Upload file as manager
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "manager", "x-user-id": "manager-user"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "manager", "x-user-id": "manager-user"})
         
         file_content = b"Test file 6"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("test6.txt", file_content, "text/plain")},
             headers={"x-user-role": "manager", "x-user-id": "manager-user"}
         )
@@ -246,7 +247,7 @@ class TestFileSoftDelete:
         
         # Delete as manager (writer role)
         response = client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}",
             headers={"x-user-role": "manager", "x-user-id": "manager-user"}
         )
         assert response.status_code == 200
@@ -259,10 +260,10 @@ class TestFolderSoftDelete:
     def test_soft_delete_folder_success(self, client):
         """Test successful soft delete of a folder"""
         # Initialize structure and create a folder
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-7"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-7"})
         
         response = client.post(
-            "/drive/lead/lead-soft-1/folder",
+            "/api/drive/lead/lead-soft-1/folder",
             json={"name": "Test Folder for Deletion"},
             headers={"x-user-role": "admin", "x-user-id": "user-7"}
         )
@@ -271,7 +272,7 @@ class TestFolderSoftDelete:
         
         # Soft delete the folder
         response = client.delete(
-            f"/drive/lead/lead-soft-1/folders/{folder_id}?reason=Test%20folder%20deletion",
+            f"/api/drive/lead/lead-soft-1/folders/{folder_id}?reason=Test%20folder%20deletion",
             headers={"x-user-role": "admin", "x-user-id": "user-7"}
         )
         assert response.status_code == 200
@@ -283,10 +284,10 @@ class TestFolderSoftDelete:
     def test_soft_delete_folder_permission_denied(self, client):
         """Test that reader role cannot soft delete folders"""
         # Create folder as admin
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "admin-user"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "admin-user"})
         
         response = client.post(
-            "/drive/lead/lead-soft-1/folder",
+            "/api/drive/lead/lead-soft-1/folder",
             json={"name": "Test Folder 2"},
             headers={"x-user-role": "admin", "x-user-id": "admin-user"}
         )
@@ -294,7 +295,7 @@ class TestFolderSoftDelete:
         
         # Try to delete as reader
         response = client.delete(
-            f"/drive/lead/lead-soft-1/folders/{folder_id}",
+            f"/api/drive/lead/lead-soft-1/folders/{folder_id}",
             headers={"x-user-role": "client", "x-user-id": "reader-user"}
         )
         assert response.status_code == 403
@@ -303,10 +304,10 @@ class TestFolderSoftDelete:
     def test_soft_delete_folder_writer_role(self, client):
         """Test that writer role (analyst) can soft delete folders"""
         # Create folder as analyst
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "analyst", "x-user-id": "analyst-user"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "analyst", "x-user-id": "analyst-user"})
         
         response = client.post(
-            "/drive/lead/lead-soft-1/folder",
+            "/api/drive/lead/lead-soft-1/folder",
             json={"name": "Analyst Test Folder"},
             headers={"x-user-role": "analyst", "x-user-id": "analyst-user"}
         )
@@ -314,7 +315,7 @@ class TestFolderSoftDelete:
         
         # Delete as analyst
         response = client.delete(
-            f"/drive/lead/lead-soft-1/folders/{folder_id}",
+            f"/api/drive/lead/lead-soft-1/folders/{folder_id}",
             headers={"x-user-role": "analyst", "x-user-id": "analyst-user"}
         )
         assert response.status_code == 200
@@ -329,11 +330,11 @@ class TestSoftDeleteAuditLog:
         db = TestingSessionLocal()
         
         # Upload and delete file
-        client.get("/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-8"})
+        client.get("/api/drive/lead/lead-soft-1", headers={"x-user-role": "admin", "x-user-id": "user-8"})
         
         file_content = b"Audit test file"
         response = client.post(
-            "/drive/lead/lead-soft-1/upload",
+            "/api/drive/lead/lead-soft-1/upload",
             files={"file": ("audit_test.txt", file_content, "text/plain")},
             headers={"x-user-role": "admin", "x-user-id": "user-8"}
         )
@@ -346,7 +347,7 @@ class TestSoftDeleteAuditLog:
         
         # Soft delete
         client.delete(
-            f"/drive/lead/lead-soft-1/files/{file_id}?reason=Audit%20test",
+            f"/api/drive/lead/lead-soft-1/files/{file_id}?reason=Audit%20test",
             headers={"x-user-role": "admin", "x-user-id": "user-8"}
         )
         

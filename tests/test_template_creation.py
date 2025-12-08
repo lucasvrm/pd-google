@@ -32,6 +32,7 @@ def setup_module(module):
     """Setup test database and mock drive environment"""
     # Set environment variable for mock drive
     os.environ["USE_MOCK_DRIVE"] = "true"
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
     
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
@@ -50,7 +51,7 @@ def setup_module(module):
     db.add(deal)
 
     # Lead
-    lead = models.Lead(id="lead-template-test", title="Template Test Lead", company_id="comp-template-test")
+    lead = models.Lead(id="lead-template-test", title="Template Test Lead", qualified_company_id="comp-template-test")
     db.add(lead)
 
     db.commit()
@@ -234,7 +235,7 @@ def test_template_application_on_deal_creation():
     db.close()
 
     # Trigger structure creation by calling the endpoint
-    response = client.get("/drive/deal/deal-template-test", headers={"x-user-role": "admin"})
+    response = client.get("/api/drive/deal/deal-template-test", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     
     data = response.json()

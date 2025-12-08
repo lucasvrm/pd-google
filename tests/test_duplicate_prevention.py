@@ -202,7 +202,7 @@ class TestCheckBeforeCreate:
         # Create a company and lead
         company = models.Company(id="comp-lead-test", name="Lead Test Company")
         db_session.add(company)
-        lead = models.Lead(id="lead-reuse-test", title="Test Lead", company_id="comp-lead-test")
+        lead = models.Lead(id="lead-reuse-test", title="Test Lead", qualified_company_id="comp-lead-test")
         db_session.add(lead)
         db_session.commit()
         
@@ -331,7 +331,7 @@ class TestConcurrentAccess:
         """Test creating leads and deals for the same company."""
         # Create test data
         company = models.Company(id="comp-multi-test", name="Multi Entity Test Company")
-        lead = models.Lead(id="lead-multi-test", title="Test Lead", company_id="comp-multi-test")
+        lead = models.Lead(id="lead-multi-test", title="Test Lead", qualified_company_id="comp-multi-test")
         deal = models.Deal(id="deal-multi-test", title="Test Deal", company_id="comp-multi-test")
         db_session.add_all([company, lead, deal])
         db_session.commit()

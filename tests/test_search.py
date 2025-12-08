@@ -30,6 +30,7 @@ MOCK_JSON = "mock_drive_db.json"
 def setup_module(module):
     # Set USE_MOCK_DRIVE to true for tests
     os.environ["USE_MOCK_DRIVE"] = "true"
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
     
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
@@ -46,13 +47,13 @@ def setup_module(module):
     db = TestingSessionLocal()
 
     # Create test entities
-    company1 = models.Company(id="comp-search-1", name="Search Test Company 1", fantasy_name="STC1")
-    company2 = models.Company(id="comp-search-2", name="Search Test Company 2", fantasy_name="STC2")
+    company1 = models.Company(id="comp-search-1", name="Search Test Company 1")
+    company2 = models.Company(id="comp-search-2", name="Search Test Company 2")
     db.add(company1)
     db.add(company2)
 
-    lead1 = models.Lead(id="lead-search-1", title="Important Lead", company_id="comp-search-1")
-    lead2 = models.Lead(id="lead-search-2", title="Regular Lead", company_id="comp-search-2")
+    lead1 = models.Lead(id="lead-search-1", title="Important Lead", qualified_company_id="comp-search-1")
+    lead2 = models.Lead(id="lead-search-2", title="Regular Lead", qualified_company_id="comp-search-2")
     db.add(lead1)
     db.add(lead2)
 
@@ -102,8 +103,8 @@ class TestBasicSearch:
     def test_search_empty_results(self, client):
         """Test search with no results"""
         response = client.get(
-            "/drive/search?q=nonexistent",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=nonexistent",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -115,27 +116,27 @@ class TestBasicSearch:
     def test_search_by_name(self, client):
         """Test search by partial name match"""
         # First, initialize and upload some files
-        client.get("/drive/lead/lead-search-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-search-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         # Upload test files
         response1 = client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("important_document.pdf", b"test content", "application/pdf")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response1.status_code == 200
         
         response2 = client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("regular_file.txt", b"test content", "text/plain")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response2.status_code == 200
         
         # Search for "important"
         response = client.get(
-            "/drive/search?q=important",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=important",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -147,18 +148,18 @@ class TestBasicSearch:
 
     def test_search_case_insensitive(self, client):
         """Test that search is case-insensitive"""
-        client.get("/drive/lead/lead-search-2", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-search-2", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         client.post(
-            "/drive/lead/lead-search-2/upload",
+            "/api/drive/lead/lead-search-2/upload",
             files={"file": ("CaseSensitive.txt", b"test", "text/plain")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         # Search with lowercase
         response = client.get(
-            "/drive/search?q=casesensitive",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=casesensitive",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         assert response.json()["total"] >= 1
@@ -170,24 +171,24 @@ class TestEntityFilters:
     def test_search_by_entity_type(self, client):
         """Test filtering by entity_type"""
         # Upload files to different entities
-        client.get("/drive/lead/lead-search-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-search-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("lead_doc.pdf", b"test", "application/pdf")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
-        client.get("/drive/deal/deal-search-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/deal/deal-search-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         client.post(
-            "/drive/deal/deal-search-1/upload",
+            "/api/drive/deal/deal-search-1/upload",
             files={"file": ("deal_doc.pdf", b"test", "application/pdf")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         # Search only in leads
         response = client.get(
-            "/drive/search?entity_type=lead&q=doc",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?entity_type=lead&q=doc",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -202,8 +203,8 @@ class TestEntityFilters:
         """Test filtering by specific entity_id"""
         # Search for specific lead
         response = client.get(
-            "/drive/search?entity_type=lead&entity_id=lead-search-1",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?entity_type=lead&entity_id=lead-search-1",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -213,8 +214,8 @@ class TestEntityFilters:
     def test_search_invalid_entity_type(self, client):
         """Test that invalid entity_type returns 400"""
         response = client.get(
-            "/drive/search?entity_type=invalid",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?entity_type=invalid",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 400
         assert "Invalid entity_type" in response.json()["detail"]
@@ -225,24 +226,24 @@ class TestMimeTypeFilter:
 
     def test_search_by_mime_type_pdf(self, client):
         """Test filtering by PDF MIME type"""
-        client.get("/drive/lead/lead-search-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-search-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         # Upload different file types
         client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("doc1.pdf", b"pdf content", "application/pdf")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("doc2.txt", b"text content", "text/plain")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         # Search for PDFs only
         response = client.get(
-            "/drive/search?mime_type=application/pdf",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?mime_type=application/pdf",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -255,8 +256,8 @@ class TestMimeTypeFilter:
     def test_search_by_mime_type_text(self, client):
         """Test filtering by text MIME type"""
         response = client.get(
-            "/drive/search?mime_type=text/plain",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?mime_type=text/plain",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -275,8 +276,8 @@ class TestDateFilters:
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         
         response = client.get(
-            f"/drive/search?created_from={quote(yesterday)}",
-            headers={"x-user-role": "admin"}
+            f"/api/drive/search?created_from={quote(yesterday)}",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -288,8 +289,8 @@ class TestDateFilters:
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
         
         response = client.get(
-            f"/drive/search?created_to={quote(tomorrow)}",
-            headers={"x-user-role": "admin"}
+            f"/api/drive/search?created_to={quote(tomorrow)}",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -302,8 +303,8 @@ class TestDateFilters:
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
         
         response = client.get(
-            f"/drive/search?created_from={quote(yesterday)}&created_to={quote(tomorrow)}",
-            headers={"x-user-role": "admin"}
+            f"/api/drive/search?created_from={quote(yesterday)}&created_to={quote(tomorrow)}",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -312,8 +313,8 @@ class TestDateFilters:
     def test_search_invalid_date_format(self, client):
         """Test that invalid date format returns 400"""
         response = client.get(
-            "/drive/search?created_from=invalid-date",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?created_from=invalid-date",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 400
         assert "Invalid created_from format" in response.json()["detail"]
@@ -324,59 +325,59 @@ class TestSoftDelete:
 
     def test_search_excludes_deleted_by_default(self, client):
         """Test that deleted files are excluded by default"""
-        client.get("/drive/lead/lead-search-1", headers={"x-user-role": "admin", "x-user-id": "test-user"})
+        client.get("/api/drive/lead/lead-search-1", headers={"x-user-role": "admin", "x-user-id": "test-user"})
         
         # Upload and then delete a file
         response = client.post(
-            "/drive/lead/lead-search-1/upload",
+            "/api/drive/lead/lead-search-1/upload",
             files={"file": ("to_delete.txt", b"will be deleted", "text/plain")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         file_id = response.json()["id"]
         
         # Search should find it
         response = client.get(
-            "/drive/search?q=to_delete",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=to_delete",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         before_delete_count = response.json()["total"]
         assert before_delete_count >= 1
         
         # Delete the file
         client.delete(
-            f"/drive/lead/lead-search-1/files/{file_id}",
+            f"/api/drive/lead/lead-search-1/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "test-user"}
         )
         
         # Search should not find it by default
         response = client.get(
-            "/drive/search?q=to_delete",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=to_delete",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         after_delete_count = response.json()["total"]
         assert after_delete_count < before_delete_count
 
     def test_search_includes_deleted_with_flag(self, client):
         """Test that deleted files are included when include_deleted=true"""
-        client.get("/drive/lead/lead-search-2", headers={"x-user-role": "admin", "x-user-id": "test-user"})
+        client.get("/api/drive/lead/lead-search-2", headers={"x-user-role": "admin", "x-user-id": "test-user"})
         
         # Upload and delete a file
         response = client.post(
-            "/drive/lead/lead-search-2/upload",
+            "/api/drive/lead/lead-search-2/upload",
             files={"file": ("deleted_file.txt", b"deleted", "text/plain")},
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         file_id = response.json()["id"]
         
         client.delete(
-            f"/drive/lead/lead-search-2/files/{file_id}",
+            f"/api/drive/lead/lead-search-2/files/{file_id}",
             headers={"x-user-role": "admin", "x-user-id": "test-user"}
         )
         
         # Search with include_deleted=true should find it
         response = client.get(
-            "/drive/search?q=deleted_file&include_deleted=true",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?q=deleted_file&include_deleted=true",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         data = response.json()
         
@@ -394,8 +395,8 @@ class TestPagination:
     def test_search_pagination_default(self, client):
         """Test default pagination"""
         response = client.get(
-            "/drive/search",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -406,8 +407,8 @@ class TestPagination:
     def test_search_pagination_custom_page_size(self, client):
         """Test custom page size"""
         response = client.get(
-            "/drive/search?page_size=10",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?page_size=10",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -418,8 +419,8 @@ class TestPagination:
         """Test navigating between pages"""
         # Get first page
         response1 = client.get(
-            "/drive/search?page=1&page_size=5",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?page=1&page_size=5",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response1.status_code == 200
         data1 = response1.json()
@@ -427,8 +428,8 @@ class TestPagination:
         # Get second page if there are enough results
         if data1["total"] > 5:
             response2 = client.get(
-                "/drive/search?page=2&page_size=5",
-                headers={"x-user-role": "admin"}
+                "/api/drive/search?page=2&page_size=5",
+                headers={"x-user-role": "admin", "x-user-id": "test_user"}
             )
             assert response2.status_code == 200
             data2 = response2.json()
@@ -437,16 +438,16 @@ class TestPagination:
     def test_search_pagination_max_page_size(self, client):
         """Test that page_size above 100 is rejected by validation"""
         response = client.get(
-            "/drive/search?page_size=200",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?page_size=200",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         # FastAPI validation rejects values > 100 with 422
         assert response.status_code == 422
         
         # Test that 100 works fine
         response = client.get(
-            "/drive/search?page_size=100",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?page_size=100",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -459,8 +460,8 @@ class TestPermissions:
     def test_search_as_admin(self, client):
         """Test search with admin role (owner permission)"""
         response = client.get(
-            "/drive/search",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         assert response.json()["permission"] == "owner"
@@ -468,8 +469,8 @@ class TestPermissions:
     def test_search_as_manager(self, client):
         """Test search with manager role (writer permission)"""
         response = client.get(
-            "/drive/search",
-            headers={"x-user-role": "manager"}
+            "/api/drive/search",
+            headers={"x-user-role": "manager", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         assert response.json()["permission"] == "writer"
@@ -477,8 +478,8 @@ class TestPermissions:
     def test_search_as_client(self, client):
         """Test search with client role (reader permission)"""
         response = client.get(
-            "/drive/search",
-            headers={"x-user-role": "client"}
+            "/api/drive/search",
+            headers={"x-user-role": "client", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         assert response.json()["permission"] == "reader"
@@ -498,7 +499,7 @@ class TestAuditLog:
         
         # Perform search
         client.get(
-            "/drive/search?q=test&entity_type=lead",
+            "/api/drive/search?q=test&entity_type=lead",
             headers={"x-user-role": "admin", "x-user-id": "audit-test-user"}
         )
         
@@ -528,8 +529,8 @@ class TestCombinedFilters:
     def test_search_combined_filters(self, client):
         """Test search with multiple filters combined"""
         response = client.get(
-            "/drive/search?entity_type=lead&q=doc&mime_type=application/pdf",
-            headers={"x-user-role": "admin"}
+            "/api/drive/search?entity_type=lead&q=doc&mime_type=application/pdf",
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 200
         data = response.json()

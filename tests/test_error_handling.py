@@ -32,6 +32,7 @@ def setup_module(module):
     """Setup test database and mock drive environment"""
     # Set environment variable for mock drive
     os.environ["USE_MOCK_DRIVE"] = "true"
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
     
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
@@ -47,7 +48,7 @@ def setup_module(module):
     deal = models.Deal(id="deal-error-test", title="Error Test Deal", company_id="comp-error-test")
     db.add(deal)
 
-    lead = models.Lead(id="lead-error-test", title="Error Test Lead", company_id="comp-error-test")
+    lead = models.Lead(id="lead-error-test", title="Error Test Lead", qualified_company_id="comp-error-test")
     db.add(lead)
 
     db.commit()
@@ -64,7 +65,7 @@ def teardown_module(module):
 def test_invalid_entity_type():
     """Test that accessing /drive with an invalid entity_type returns 400 with proper error message"""
     # Test with completely invalid entity type
-    response = client.get("/drive/invalid_type/some-id", headers={"x-user-role": "admin"})
+    response = client.get("/api/drive/invalid_type/some-id", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     
     assert response.status_code == 400
     assert response.headers["content-type"] == "application/json"
@@ -77,7 +78,7 @@ def test_invalid_entity_type():
 
 def test_contact_entity_type_disabled():
     """Test that 'contact' entity type is properly disabled and returns 400"""
-    response = client.get("/drive/contact/some-id", headers={"x-user-role": "admin"})
+    response = client.get("/api/drive/contact/some-id", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     
     assert response.status_code == 400
     assert response.headers["content-type"] == "application/json"
@@ -92,7 +93,7 @@ def test_nonexistent_entity_returns_404():
     # Use a UUID that doesn't exist in the database
     non_existent_id = "00000000-0000-0000-0000-000000000000"
     
-    response = client.get(f"/drive/deal/{non_existent_id}", headers={"x-user-role": "admin"})
+    response = client.get(f"/api/drive/deal/{non_existent_id}", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     
     # Should return 404 since the deal doesn't exist
     assert response.status_code == 404
@@ -107,14 +108,14 @@ def test_nonexistent_entity_returns_404():
 def test_reader_role_cannot_create_folder():
     """Test that a user with reader role cannot create a folder (403 error)"""
     # First, initialize the structure by calling GET
-    response = client.get("/drive/deal/deal-error-test", headers={"x-user-role": "admin"})
+    response = client.get("/api/drive/deal/deal-error-test", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response.status_code == 200
     
     # Now try to create a folder with reader role (client role maps to reader)
     response = client.post(
-        "/drive/deal/deal-error-test/folder",
+        "/api/drive/deal/deal-error-test/folder",
         json={"name": "Unauthorized Folder"},
-        headers={"x-user-role": "client"}
+        headers={"x-user-role": "client", "x-user-id": "test_user"}
     )
     
     assert response.status_code == 403
@@ -128,7 +129,7 @@ def test_reader_role_cannot_create_folder():
 def test_reader_role_cannot_upload_file():
     """Test that a user with reader role cannot upload files (403 error)"""
     # First, initialize the structure by calling GET
-    response = client.get("/drive/lead/lead-error-test", headers={"x-user-role": "admin"})
+    response = client.get("/api/drive/lead/lead-error-test", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response.status_code == 200
     
     # Create a fake file for upload
@@ -136,7 +137,7 @@ def test_reader_role_cannot_upload_file():
     
     # Try to upload with reader role (customer role maps to reader)
     response = client.post(
-        "/drive/lead/lead-error-test/upload",
+        "/api/drive/lead/lead-error-test/upload",
         files={"file": ("test.txt", fake_file, "text/plain")},
         headers={"x-user-role": "customer"}
     )
@@ -154,14 +155,14 @@ def test_error_response_format_consistency():
     # Test various error scenarios and verify they all return consistent format
     
     # 1. Invalid entity type
-    response1 = client.get("/drive/invalid/123", headers={"x-user-role": "admin"})
+    response1 = client.get("/api/drive/invalid/123", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response1.status_code == 400
     data1 = response1.json()
     assert "detail" in data1
     assert isinstance(data1["detail"], str)
     
     # 2. Non-existent entity
-    response2 = client.get("/drive/deal/nonexistent-id", headers={"x-user-role": "admin"})
+    response2 = client.get("/api/drive/deal/nonexistent-id", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response2.status_code == 404
     data2 = response2.json()
     assert "detail" in data2
@@ -169,13 +170,13 @@ def test_error_response_format_consistency():
     
     # 3. Permission denied
     # First create structure
-    client.get("/drive/company/comp-error-test", headers={"x-user-role": "admin"})
+    client.get("/api/drive/company/comp-error-test", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     
     # Try to create folder without permission
     response3 = client.post(
-        "/drive/company/comp-error-test/folder",
+        "/api/drive/company/comp-error-test/folder",
         json={"name": "Test Folder"},
-        headers={"x-user-role": "client"}
+        headers={"x-user-role": "client", "x-user-id": "test_user"}
     )
     assert response3.status_code == 403
     data3 = response3.json()

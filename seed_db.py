@@ -27,7 +27,7 @@ def seed_data():
         db.add(company1)
 
         # Lead
-        lead1 = models.Lead(id="lead-001", title="Arie - Terreno Vila Olímpia", company_id="comp-123")
+        lead1 = models.Lead(id="lead-001", title="Arie - Terreno Vila Olímpia", qualified_company_id="comp-123")
         db.add(lead1)
 
         # Deal

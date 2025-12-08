@@ -331,12 +331,12 @@ class HierarchyService:
         # Determinar nome seguro para o Lead
         lead_name = getattr(lead, 'legal_name', getattr(lead, 'name', 'Unknown'))
 
-        if not lead.company_id:
-            print(f"Warning: Lead {lead_id} has no company_id.")
+        if not lead.qualified_company_id:
+            print(f"Warning: Lead {lead_id} has no qualified_company_id.")
             folder_name = f"Lead - {lead_name}"
             folder = self.drive_service.create_folder(name=folder_name)
         else:
-            company_folder = self.ensure_company_structure(lead.company_id, background_tasks=background_tasks)
+            company_folder = self.ensure_company_structure(lead.qualified_company_id, background_tasks=background_tasks)
 
             # Get or create '01. Leads' folder
             leads_folder_id = self._get_or_create_structural_folder("01. Leads", company_folder.folder_id)

@@ -103,7 +103,7 @@ class Lead(Base):
     id = Column(String, primary_key=True) # UUID
     # Map 'title' attribute to 'legal_name' column
     title = Column("legal_name", String)
-    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    qualified_company_id = Column(String, ForeignKey("companies.id"), nullable=True)
 
     # Relationship (optional, but helpful)
     company = relationship("Company")

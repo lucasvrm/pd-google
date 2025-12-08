@@ -28,16 +28,18 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 def setup_module(module):
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
+    os.environ["USE_MOCK_DRIVE"] = "true"
     Base.metadata.create_all(bind=engine)
     # Seed mock data
     db = TestingSessionLocal()
 
     # Company
-    company1 = models.Company(id="comp-123", name="Test Company", fantasy_name="Fantasy Test")
+    company1 = models.Company(id="comp-123", name="Test Company")
     db.add(company1)
 
     # Lead
-    lead1 = models.Lead(id="lead-001", title="Test Lead", company_id="comp-123")
+    lead1 = models.Lead(id="lead-001", title="Test Lead", qualified_company_id="comp-123")
     db.add(lead1)
 
     # Deal
@@ -82,9 +84,9 @@ def test_get_drive_company():
     pass
 
 def test_invalid_entity_type():
-    response = client.get("/drive/invalid/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
+    response = client.get("/api/drive/invalid/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
     assert response.status_code == 400
 
 def test_contact_disabled():
-    response = client.get("/drive/contact/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
+    response = client.get("/api/drive/contact/123", headers={"x-user-id": "u1", "x-user-role": "admin"})
     assert response.status_code == 400
