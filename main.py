@@ -59,8 +59,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CORREÇÃO AQUI: Adicionado prefix="/api" para alinhar com o Frontend ---
-app.include_router(drive.router, prefix="/api") 
+app.include_router(drive.router, prefix="/api")
 app.include_router(webhooks.router)
 app.include_router(calendar.router)
 app.include_router(drive_items_adapter.router, prefix="/api/drive")
