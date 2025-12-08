@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import Optional, Any
 import models
 from services.google_drive_mock import GoogleDriveService
@@ -124,22 +125,54 @@ class HierarchyService:
         # 3. Get Parent (Companies Root)
         companies_root = self.get_or_create_companies_root()
 
-        # 4. Create Folder
-        print(f"Creating Company Folder: {folder_name}")
-        folder = self.drive_service.create_folder(name=folder_name, parent_id=companies_root.folder_id)
+        # 4. Check if folder already exists in Drive before creating
+        print(f"Checking for existing Company Folder: {folder_name}")
+        existing_folder = None
+        try:
+            children = self.drive_service.list_files(companies_root.folder_id)
+            for file in children:
+                if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                    existing_folder = file
+                    print(f"Found existing Company Folder in Drive: {existing_folder['id']}")
+                    break
+        except Exception as e:
+            print(f"Warning: Could not list files in parent folder: {e}")
 
-        # 5. Save Mapping
+        # 5. Create Folder only if it doesn't exist
+        if existing_folder:
+            folder = existing_folder
+        else:
+            print(f"Creating Company Folder: {folder_name}")
+            folder = self.drive_service.create_folder(name=folder_name, parent_id=companies_root.folder_id)
+
+        # 6. Save Mapping with race condition handling
         new_mapping = models.DriveFolder(
             entity_type="company",
             entity_id=company_id,
             folder_id=folder["id"],
             folder_url=folder.get("webViewLink")
         )
-        self.db.add(new_mapping)
-        self.db.commit()
-        self.db.refresh(new_mapping)
+        
+        try:
+            self.db.add(new_mapping)
+            self.db.commit()
+            self.db.refresh(new_mapping)
+        except IntegrityError:
+            # Race condition: another process created the mapping
+            print(f"Race condition detected: mapping already exists for company {company_id}")
+            self.db.rollback()
+            # Query for the existing record
+            existing_mapping = self.db.query(models.DriveFolder).filter_by(
+                entity_type="company",
+                entity_id=company_id
+            ).first()
+            if existing_mapping:
+                return existing_mapping
+            else:
+                # Unexpected case, re-raise
+                raise
 
-        # 6. Apply Template
+        # 7. Apply Template
         from services.template_service import TemplateService, run_apply_template_background
 
         if background_tasks:
@@ -182,27 +215,75 @@ class HierarchyService:
             # We pass background_tasks here too, so if company is created fresh, its template is backgrounded
             company_folder = self.ensure_company_structure(deal.company_id, background_tasks=background_tasks)
 
-            # Find '02. Deals' folder inside Company Folder
-            # Note: If company template is running in background, '02. Deals' might not exist yet!
-            # We need to use get_or_create_folder here to be safe/idempotent.
+            # Find or create '02. Deals' folder inside Company Folder
+            # Check if it exists first to prevent duplicates
+            print(f"Checking for existing '02. Deals' folder in company {deal.company_id}")
+            deals_folder_data = None
+            try:
+                children = self.drive_service.list_files(company_folder.folder_id)
+                for file in children:
+                    if file.get('name') == "02. Deals" and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                        deals_folder_data = file
+                        print(f"Found existing '02. Deals' folder: {deals_folder_data['id']}")
+                        break
+            except Exception as e:
+                print(f"Warning: Could not list files in company folder: {e}")
 
-            # Using get_or_create from Drive Service directly is safer than listing manually
-            deals_folder = self.drive_service.get_or_create_folder("02. Deals", parent_id=company_folder.folder_id)
-            deals_folder_id = deals_folder['id']
+            # Create '02. Deals' folder only if it doesn't exist
+            if deals_folder_data:
+                deals_folder_id = deals_folder_data['id']
+            else:
+                deals_folder = self.drive_service.create_folder("02. Deals", parent_id=company_folder.folder_id)
+                deals_folder_id = deals_folder['id']
 
+            # Now check if the Deal folder already exists
             deal_name = getattr(deal, 'client_name', getattr(deal, 'title', 'Unknown'))
             folder_name = f"Deal - {deal_name}"
-            folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
+            
+            print(f"Checking for existing Deal Folder: {folder_name}")
+            existing_deal_folder = None
+            try:
+                deal_children = self.drive_service.list_files(deals_folder_id)
+                for file in deal_children:
+                    if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                        existing_deal_folder = file
+                        print(f"Found existing Deal Folder in Drive: {existing_deal_folder['id']}")
+                        break
+            except Exception as e:
+                print(f"Warning: Could not list files in deals folder: {e}")
 
-        # Map
+            # Create Deal folder only if it doesn't exist
+            if existing_deal_folder:
+                folder = existing_deal_folder
+            else:
+                folder = self.drive_service.create_folder(name=folder_name, parent_id=deals_folder_id)
+
+        # Map with race condition handling
         new_mapping = models.DriveFolder(
             entity_type="deal",
             entity_id=deal_id,
             folder_id=folder["id"],
             folder_url=folder.get("webViewLink")
         )
-        self.db.add(new_mapping)
-        self.db.commit()
+        
+        try:
+            self.db.add(new_mapping)
+            self.db.commit()
+            self.db.refresh(new_mapping)
+        except IntegrityError:
+            # Race condition: another process created the mapping
+            print(f"Race condition detected: mapping already exists for deal {deal_id}")
+            self.db.rollback()
+            # Query for the existing record
+            existing_mapping = self.db.query(models.DriveFolder).filter_by(
+                entity_type="deal",
+                entity_id=deal_id
+            ).first()
+            if existing_mapping:
+                return existing_mapping
+            else:
+                # Unexpected case, re-raise
+                raise
 
         # Apply Template
         from services.template_service import TemplateService, run_apply_template_background
@@ -246,21 +327,73 @@ class HierarchyService:
         else:
             company_folder = self.ensure_company_structure(lead.company_id, background_tasks=background_tasks)
 
-            # Idempotent get_or_create for "01. Leads" in case company template is lagging
-            leads_folder = self.drive_service.get_or_create_folder("01. Leads", parent_id=company_folder.folder_id)
-            leads_folder_id = leads_folder['id']
+            # Check if '01. Leads' folder exists before creating
+            print(f"Checking for existing '01. Leads' folder in company {lead.company_id}")
+            leads_folder_data = None
+            try:
+                children = self.drive_service.list_files(company_folder.folder_id)
+                for file in children:
+                    if file.get('name') == "01. Leads" and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                        leads_folder_data = file
+                        print(f"Found existing '01. Leads' folder: {leads_folder_data['id']}")
+                        break
+            except Exception as e:
+                print(f"Warning: Could not list files in company folder: {e}")
 
+            # Create '01. Leads' folder only if it doesn't exist
+            if leads_folder_data:
+                leads_folder_id = leads_folder_data['id']
+            else:
+                leads_folder = self.drive_service.create_folder("01. Leads", parent_id=company_folder.folder_id)
+                leads_folder_id = leads_folder['id']
+
+            # Now check if the Lead folder already exists
             folder_name = f"Lead - {lead_name}"
-            folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
+            
+            print(f"Checking for existing Lead Folder: {folder_name}")
+            existing_lead_folder = None
+            try:
+                lead_children = self.drive_service.list_files(leads_folder_id)
+                for file in lead_children:
+                    if file.get('name') == folder_name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                        existing_lead_folder = file
+                        print(f"Found existing Lead Folder in Drive: {existing_lead_folder['id']}")
+                        break
+            except Exception as e:
+                print(f"Warning: Could not list files in leads folder: {e}")
 
+            # Create Lead folder only if it doesn't exist
+            if existing_lead_folder:
+                folder = existing_lead_folder
+            else:
+                folder = self.drive_service.create_folder(name=folder_name, parent_id=leads_folder_id)
+
+        # Map with race condition handling
         new_mapping = models.DriveFolder(
             entity_type="lead",
             entity_id=lead_id,
             folder_id=folder["id"],
             folder_url=folder.get("webViewLink")
         )
-        self.db.add(new_mapping)
-        self.db.commit()
+        
+        try:
+            self.db.add(new_mapping)
+            self.db.commit()
+            self.db.refresh(new_mapping)
+        except IntegrityError:
+            # Race condition: another process created the mapping
+            print(f"Race condition detected: mapping already exists for lead {lead_id}")
+            self.db.rollback()
+            # Query for the existing record
+            existing_mapping = self.db.query(models.DriveFolder).filter_by(
+                entity_type="lead",
+                entity_id=lead_id
+            ).first()
+            if existing_mapping:
+                return existing_mapping
+            else:
+                # Unexpected case, re-raise
+                raise
 
         from services.template_service import TemplateService, run_apply_template_background
 
