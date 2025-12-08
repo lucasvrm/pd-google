@@ -140,7 +140,7 @@ def test_webhook_endpoint_change_notification():
 
 
 def test_webhook_endpoint_invalid_token():
-    """Test webhook endpoint warns but accepts requests with invalid token (to avoid loops)."""
+    """Test webhook endpoint rejects requests with invalid token (403)."""
     # Create a webhook channel
     db = TestingSessionLocal()
     channel = models.DriveWebhookChannel(
@@ -164,8 +164,9 @@ def test_webhook_endpoint_invalid_token():
     }
     
     response = client.post("/webhooks/google-drive", headers=headers)
-    # Changed behavior: return 200 to stop Google from retrying, but log warning
-    assert response.status_code == 200
+    # Strict token validation: return 403 for invalid tokens
+    assert response.status_code == 403
+    assert "Invalid webhook token" in response.json()["detail"]
 
 
 def test_webhook_endpoint_unknown_channel():
@@ -441,3 +442,61 @@ def test_webhook_maps_to_tracked_folder():
     
     # The logs should show it mapped to the tracked folder
     # (check console output in actual implementation)
+
+
+def test_calendar_webhook_with_valid_token():
+    """Test calendar webhook processes correctly with valid token."""
+    # Create a calendar sync state
+    db = TestingSessionLocal()
+    sync_state = models.CalendarSyncState(
+        channel_id="test-calendar-channel-valid",
+        resource_id="test-calendar-resource",
+        calendar_id="primary",
+        expiration=datetime.now(timezone.utc) + timedelta(hours=24),
+        active=True
+    )
+    db.add(sync_state)
+    db.commit()
+    db.close()
+    
+    # Send sync notification with valid token
+    headers = {
+        "X-Goog-Channel-ID": "test-calendar-channel-valid",
+        "X-Goog-Resource-ID": "test-calendar-resource",
+        "X-Goog-Resource-State": "sync",
+        "X-Goog-Channel-Token": "test-secret-123"
+    }
+    
+    response = client.post("/webhooks/google-drive", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+
+
+def test_calendar_webhook_with_invalid_token():
+    """Test calendar webhook rejects requests with invalid token (403)."""
+    # Create a calendar sync state
+    db = TestingSessionLocal()
+    sync_state = models.CalendarSyncState(
+        channel_id="test-calendar-channel-invalid",
+        resource_id="test-calendar-resource-2",
+        calendar_id="primary",
+        expiration=datetime.now(timezone.utc) + timedelta(hours=24),
+        active=True
+    )
+    db.add(sync_state)
+    db.commit()
+    db.close()
+    
+    # Send notification with invalid token
+    headers = {
+        "X-Goog-Channel-ID": "test-calendar-channel-invalid",
+        "X-Goog-Resource-ID": "test-calendar-resource-2",
+        "X-Goog-Resource-State": "update",
+        "X-Goog-Channel-Token": "invalid-token-456"
+    }
+    
+    response = client.post("/webhooks/google-drive", headers=headers)
+    # Strict token validation: return 403 for invalid tokens
+    assert response.status_code == 403
+    assert "Invalid webhook token" in response.json()["detail"]

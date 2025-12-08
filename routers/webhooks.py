@@ -76,8 +76,14 @@ async def handle_drive_webhook(db, channel, state, token, uri, changed):
     if not channel.active:
         return {"status": "ignored", "reason": "inactive_channel"}
     
-    if config.WEBHOOK_SECRET and token != config.WEBHOOK_SECRET:
-         logger.warning("Invalid token for Drive webhook")
+    # Strict webhook token validation
+    if config.WEBHOOK_SECRET:
+        if token != config.WEBHOOK_SECRET:
+            logger.warning(f"Invalid webhook token for Drive channel {channel.channel_id}")
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid webhook token"
+            )
     
     if state == "sync":
         logger.info(f"Drive Sync Handshake: {channel.channel_id}")
@@ -206,6 +212,15 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
 
     if not channel.active:
          return {"status": "ignored", "reason": "inactive_channel"}
+
+    # Strict webhook token validation
+    if config.WEBHOOK_SECRET:
+        if token != config.WEBHOOK_SECRET:
+            logger.warning(f"Invalid webhook token for Calendar channel {channel.channel_id}")
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid webhook token"
+            )
 
     if state == "sync":
         logger.info("Calendar Sync Handshake")
