@@ -151,7 +151,7 @@ class HierarchyService:
 
     def ensure_company_structure(self, company_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
-        Ensures '/Companies/[Company Name]' exists.
+        Ensures '/Companies/[Company Name]' exists and applies template to guarantee complete structure.
         """
         # 1. Check if already exists in mapping
         existing = self.db.query(models.DriveFolder).filter_by(
@@ -161,6 +161,16 @@ class HierarchyService:
 
         if existing:
             if self._validate_mapping(existing):
+                # Apply template to ensure structure is complete even for existing folders
+                from services.template_service import TemplateService, run_apply_template_background
+
+                if background_tasks:
+                    print(f"Queueing background template verification for company {company_id}")
+                    background_tasks.add_task(run_apply_template_background, "company", existing.folder_id)
+                else:
+                    ts = TemplateService(self.db, self.drive_service)
+                    ts.apply_template("company", existing.folder_id)
+                
                 return existing
             else:
                 self.db.delete(existing)
@@ -198,22 +208,21 @@ class HierarchyService:
         
         result, is_new = self._handle_mapping_race_condition("company", company_id, new_mapping)
 
-        # 7. Apply Template (only if we just created the mapping)
-        if is_new:
-            from services.template_service import TemplateService, run_apply_template_background
+        # 7. Apply Template to ensure complete structure
+        from services.template_service import TemplateService, run_apply_template_background
 
-            if background_tasks:
-                print(f"Queueing background template for company {company_id}")
-                background_tasks.add_task(run_apply_template_background, "company", folder["id"])
-            else:
-                ts = TemplateService(self.db, self.drive_service)
-                ts.apply_template("company", folder["id"])
+        if background_tasks:
+            print(f"Queueing background template for company {company_id}")
+            background_tasks.add_task(run_apply_template_background, "company", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("company", folder["id"])
 
         return result
 
     def ensure_deal_structure(self, deal_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
-        Ensures '/Companies/[Company]/02. Deals/Deal - [Name]' exists.
+        Ensures '/Companies/[Company]/02. Deals/Deal - [Name]' exists and applies template to guarantee complete structure.
         """
         existing = self.db.query(models.DriveFolder).filter_by(
             entity_type="deal",
@@ -222,6 +231,16 @@ class HierarchyService:
 
         if existing:
             if self._validate_mapping(existing):
+                # Apply template to ensure structure is complete even for existing folders
+                from services.template_service import TemplateService, run_apply_template_background
+
+                if background_tasks:
+                    print(f"Queueing background template verification for deal {deal_id}")
+                    background_tasks.add_task(run_apply_template_background, "deal", existing.folder_id)
+                else:
+                    ts = TemplateService(self.db, self.drive_service)
+                    ts.apply_template("deal", existing.folder_id)
+                
                 return existing
             else:
                 self.db.delete(existing)
@@ -267,22 +286,21 @@ class HierarchyService:
         
         result, is_new = self._handle_mapping_race_condition("deal", deal_id, new_mapping)
 
-        # Apply Template (only if we just created the mapping)
-        if is_new:
-            from services.template_service import TemplateService, run_apply_template_background
+        # Apply Template to ensure complete structure
+        from services.template_service import TemplateService, run_apply_template_background
 
-            if background_tasks:
-                print(f"Queueing background template for deal {deal_id}")
-                background_tasks.add_task(run_apply_template_background, "deal", folder["id"])
-            else:
-                ts = TemplateService(self.db, self.drive_service)
-                ts.apply_template("deal", folder["id"])
+        if background_tasks:
+            print(f"Queueing background template for deal {deal_id}")
+            background_tasks.add_task(run_apply_template_background, "deal", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("deal", folder["id"])
 
         return result
 
     def ensure_lead_structure(self, lead_id: str, background_tasks: Optional[Any] = None) -> models.DriveFolder:
         """
-        Ensures '/Companies/[Company]/01. Leads/Lead - [Name]' exists.
+        Ensures '/Companies/[Company]/01. Leads/Lead - [Name]' exists and applies template to guarantee complete structure.
         """
         existing = self.db.query(models.DriveFolder).filter_by(
             entity_type="lead",
@@ -291,6 +309,16 @@ class HierarchyService:
 
         if existing:
             if self._validate_mapping(existing):
+                # Apply template to ensure structure is complete even for existing folders
+                from services.template_service import TemplateService, run_apply_template_background
+
+                if background_tasks:
+                    print(f"Queueing background template verification for lead {lead_id}")
+                    background_tasks.add_task(run_apply_template_background, "lead", existing.folder_id)
+                else:
+                    ts = TemplateService(self.db, self.drive_service)
+                    ts.apply_template("lead", existing.folder_id)
+                
                 return existing
             else:
                 self.db.delete(existing)
@@ -335,16 +363,15 @@ class HierarchyService:
         
         result, is_new = self._handle_mapping_race_condition("lead", lead_id, new_mapping)
 
-        # Apply Template (only if we just created the mapping)
-        if is_new:
-            from services.template_service import TemplateService, run_apply_template_background
+        # Apply Template to ensure complete structure
+        from services.template_service import TemplateService, run_apply_template_background
 
-            if background_tasks:
-                print(f"Queueing background template for lead {lead_id}")
-                background_tasks.add_task(run_apply_template_background, "lead", folder["id"])
-            else:
-                ts = TemplateService(self.db, self.drive_service)
-                ts.apply_template("lead", folder["id"])
+        if background_tasks:
+            print(f"Queueing background template for lead {lead_id}")
+            background_tasks.add_task(run_apply_template_background, "lead", folder["id"])
+        else:
+            ts = TemplateService(self.db, self.drive_service)
+            ts.apply_template("lead", folder["id"])
 
         return result
 
