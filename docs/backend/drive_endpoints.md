@@ -170,3 +170,45 @@ Advanced search for files and folders across entities (if permitted) or within s
 
 **Response:**
 Returns a paginated list of items with a similar structure to the List Files endpoint, plus a `permission` field for the context.
+
+### 7. Sync Name
+
+Triggers a sync of the root folder name with the current entity name in the database.
+
+**Endpoint:** `POST /drive/sync-name`
+
+**Body:**
+```json
+{
+  "entity_type": "lead",
+  "entity_id": "uuid-here"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "synced",
+  "message": "Folder name synchronization triggered"
+}
+```
+
+## Entity Support
+
+The API fully supports the following entities:
+
+1. **Company**: Root folder `/Companies/[Name]`
+2. **Deal**: Folder `/Companies/[Client]/02. Deals/Deal - [Name]`
+3. **Lead**: Folder `/Companies/[Client]/01. Leads/Lead - [Name]`
+
+### Lead Specifics
+
+- **Template**:
+  - `00. Administração do Lead`
+  - `01. Originação & Materiais`
+  - `02. Ativo / Terreno (Básico)`
+  - `03. Empreendimento & Viabilidade (Preliminar)`
+  - `04. Partes & KYC (Básico)`
+  - `05. Decisão Interna`
+- **Creation**: Automatic upon first access to `GET /drive/lead/{id}` or via adapter.
+- **Naming**: `Lead - [Legal Name]` (or `[Name]` if Legal Name is missing).
