@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from services.google_calendar_service import GoogleCalendarService
 from services.google_drive_real import GoogleDriveRealService
+from utils.retry import exponential_backoff_retry
 import logging
 
 router = APIRouter()
@@ -246,14 +247,23 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
     page_token = None
     new_sync_token = None
     
+    # Wrapper function for the API call with retry
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
+    def fetch_events_page(calendar_id, sync_token, page_token):
+        return service.service.events().list(
+            calendarId=calendar_id,
+            syncToken=sync_token,
+            pageToken=page_token,
+            singleEvents=True
+        ).execute()
+    
     while True:
         try:
-            result = service.service.events().list(
-                calendarId=channel.calendar_id,
-                syncToken=channel.sync_token,
-                pageToken=page_token,
-                singleEvents=True
-            ).execute()
+            result = fetch_events_page(
+                calendar_id=channel.calendar_id,
+                sync_token=channel.sync_token,
+                page_token=page_token
+            )
         except Exception as e:
             error_msg = str(e)
             if '410' in error_msg or 'sync token is no longer valid' in error_msg.lower():
