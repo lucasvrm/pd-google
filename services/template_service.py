@@ -13,6 +13,9 @@ class TemplateService:
         Finds the active template for the entity_type and creates its folder structure
         inside the given root_folder_id.
         Supports nested folders via parent_id.
+        
+        This method is idempotent - calling it multiple times will reuse existing folders
+        and not create duplicates.
         """
         template = self.db.query(models.DriveStructureTemplate).filter_by(
             entity_type=entity_type,
@@ -23,16 +26,53 @@ class TemplateService:
             print(f"No active template found for {entity_type}")
             return
 
-        # Sort nodes by parent dependency (parents must be created before children)
-        # Simple sorting by ID or order might work if inserted in order, but topological sort is safer.
-        # Given our seed strategy (parents created first), sorting by ID usually works,
-        # but let's be robust: sort by 'level' or ensure we process parents first.
-        # Since we don't have 'level', we can loop.
-
-        # Better approach:
-        # 1. Get all nodes.
-        # 2. Process nodes with parent_id=None (Root level relative to entity).
-        # 3. Process children of created nodes recursively or iteratively.
+        # Build a local cache of existing folders per parent to minimize API calls
+        # and ensure consistency within a single template application
+        parent_children_cache = {}
+        
+        def get_cached_children(parent_id: str):
+            """Get children of a parent folder, using local cache."""
+            if parent_id not in parent_children_cache:
+                try:
+                    children = self.drive_service.list_files(parent_id)
+                    # Normalize names for comparison (trim whitespace)
+                    parent_children_cache[parent_id] = {
+                        child['name'].strip(): child 
+                        for child in children 
+                        if child.get('mimeType') == 'application/vnd.google-apps.folder'
+                    }
+                except Exception as e:
+                    print(f"Warning: Failed to list children of {parent_id}: {e}")
+                    parent_children_cache[parent_id] = {}
+            return parent_children_cache[parent_id]
+        
+        def find_or_create_folder(name: str, parent_id: str) -> dict:
+            """
+            Find existing folder by name in parent or create it.
+            Uses local cache to ensure consistency within this template application.
+            """
+            normalized_name = name.strip()
+            
+            # Check local cache first
+            children = get_cached_children(parent_id)
+            
+            if normalized_name in children:
+                print(f"Reusing existing folder: {normalized_name} in {parent_id}")
+                return children[normalized_name]
+            
+            # Not in cache - use get_or_create_folder which does its own check
+            # This handles race conditions where another process might have created it
+            print(f"Creating template folder: {normalized_name} in {parent_id}")
+            created = self.drive_service.get_or_create_folder(
+                name=normalized_name,
+                parent_id=parent_id
+            )
+            
+            # Add to local cache to avoid duplicate checks
+            if created and 'id' in created:
+                children[normalized_name] = created
+            
+            return created
 
         nodes_by_id = {node.id: node for node in template.nodes}
         # Map: DB_Node_ID -> Created_Drive_Folder_ID
@@ -50,21 +90,10 @@ class TemplateService:
         # None as key means root of the template (no parent node)
         queue = sorted(tree.get(None, []), key=lambda x: x.order)
 
-        # We need to map 'None' parent_id (DB) to 'root_folder_id' (Drive Argument)
-        # But 'parent_id' in create_folder logic:
-        # If node has no parent_id (None), it goes into root_folder_id.
-        # If node has parent_id (X), it goes into node_to_drive_id[X].
-
         def create_nodes_recursive(current_nodes, parent_drive_id):
             for node in current_nodes:
-                print(f"Ensuring template folder: {node.name} inside {parent_drive_id}")
-
-                # CHANGED: Use get_or_create_folder to be idempotent and robust
-                # This allows repairing partial structures without duplicates
-                created = self.drive_service.get_or_create_folder(
-                    name=node.name,
-                    parent_id=parent_drive_id
-                )
+                # Use the new find_or_create_folder with local caching
+                created = find_or_create_folder(node.name, parent_drive_id)
 
                 if created and 'id' in created:
                     node_to_drive_id[node.id] = created['id']

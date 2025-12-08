@@ -35,18 +35,22 @@ class GoogleDriveService:
     def get_or_create_folder(self, name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Mock implementation of get_or_create_folder.
+        Normalizes folder names to prevent duplicates from whitespace differences.
         """
         parent_id = parent_id or "root"
+        # Normalize name by stripping whitespace
+        normalized_name = name.strip()
 
-        # 1. Check if exists
+        # 1. Check if exists with normalized comparison
         # In mock, we can iterate over folders
         self._load_db()
         for f_id, f_data in self.db["folders"].items():
-            if f_data.get("name") == name and parent_id in f_data.get("parents", []):
+            folder_name = f_data.get("name", "").strip()
+            if folder_name == normalized_name and parent_id in f_data.get("parents", []):
                 return f_data
 
-        # 2. Create if not exists
-        return self.create_folder(name, parent_id)
+        # 2. Create if not exists (use normalized name)
+        return self.create_folder(normalized_name, parent_id)
 
     def create_folder(self, name: str, parent_id: str = "root") -> Dict[str, Any]:
         self._load_db()
