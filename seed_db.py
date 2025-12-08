@@ -22,7 +22,8 @@ def seed_data():
         print("Seeding Mock Supabase Data...")
 
         # Company
-        company1 = models.Company(id="comp-123", name="Arie Properties SPE Ltda", fantasy_name="Arie Properties")
+        # fantasy_name removed to match models.py
+        company1 = models.Company(id="comp-123", name="Arie Properties SPE Ltda")
         db.add(company1)
 
         # Lead
