@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel
 from datetime import datetime
 import json
@@ -11,7 +11,6 @@ import models
 from config import config
 
 router = APIRouter(
-    prefix="/calendar",
     tags=["calendar"]
 )
 
@@ -256,9 +255,12 @@ def create_event(
 def list_events(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
-    status: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0,
+    status: Optional[Literal["confirmed", "tentative", "cancelled"]] = Query(
+        None, 
+        description="Filter by event status"
+    ),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: Session = Depends(get_db)
 ):
     """
@@ -278,10 +280,6 @@ def list_events(
     - By default, cancelled events are excluded unless explicitly requested via status filter
     - Events are synced from Google Calendar via webhooks
     """
-    # Limit the maximum results to prevent overload
-    if limit > 500:
-        limit = 500
-    
     # Build query
     query = db.query(models.CalendarEvent)
     
