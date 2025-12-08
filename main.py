@@ -61,7 +61,7 @@ app.add_middleware(
 
 app.include_router(drive.router, prefix="/api")
 app.include_router(webhooks.router)
-app.include_router(calendar.router)
+app.include_router(calendar.router, prefix="/api")
 app.include_router(drive_items_adapter.router, prefix="/api/drive")
 
 @app.get("/")

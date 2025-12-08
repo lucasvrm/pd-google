@@ -103,7 +103,7 @@ def teardown_module(module):
 # 3. Tests
 
 def test_create_event():
-    response = client.post("/calendar/events", json={
+    response = client.post("/api/calendar/events", json={
         "summary": "Test Meeting",
         "description": "Discussing things",
         "start_time": "2023-10-27T10:00:00",
@@ -121,7 +121,7 @@ def test_create_event():
 
 def test_list_events():
     # Setup: Ensure DB has data (from previous test or new)
-    response = client.get("/calendar/events")
+    response = client.get("/api/calendar/events")
     assert response.status_code == 200
     data = response.json()
     assert len(data) >= 1
@@ -129,7 +129,7 @@ def test_list_events():
 
 def test_update_event():
     # First create an event to update
-    create_res = client.post("/calendar/events", json={
+    create_res = client.post("/api/calendar/events", json={
         "summary": "To Update",
         "start_time": "2023-10-28T10:00:00",
         "end_time": "2023-10-28T11:00:00"
@@ -137,14 +137,14 @@ def test_update_event():
     event_id = create_res.json()["id"]
 
     # Update it
-    response = client.patch(f"/calendar/events/{event_id}", json={
+    response = client.patch(f"/api/calendar/events/{event_id}", json={
         "summary": "Updated Title"
     })
 
     assert response.status_code == 200
 
     # Verify in list
-    get_res = client.get("/calendar/events")
+    get_res = client.get("/api/calendar/events")
     found = False
     for evt in get_res.json():
         if evt["id"] == event_id:
@@ -154,7 +154,7 @@ def test_update_event():
 
 def test_delete_event():
     # Create event to delete
-    create_res = client.post("/calendar/events", json={
+    create_res = client.post("/api/calendar/events", json={
         "summary": "To Delete",
         "start_time": "2023-10-29T10:00:00",
         "end_time": "2023-10-29T11:00:00"
@@ -162,7 +162,7 @@ def test_delete_event():
     event_id = create_res.json()["id"]
 
     # Delete it
-    response = client.delete(f"/calendar/events/{event_id}")
+    response = client.delete(f"/api/calendar/events/{event_id}")
     assert response.status_code == 200
 
     # Verify status is cancelled in DB (Soft Delete behavior in router)
@@ -172,12 +172,12 @@ def test_delete_event():
     # The GET endpoint filters out cancelled events:
     # query = db.query(models.CalendarEvent).filter(models.CalendarEvent.status != 'cancelled')
 
-    get_res = client.get("/calendar/events")
+    get_res = client.get("/api/calendar/events")
     for evt in get_res.json():
         assert evt["id"] != event_id
 
 def test_watch_calendar():
-    response = client.post("/calendar/watch")
+    response = client.post("/api/calendar/watch")
     assert response.status_code == 201
     data = response.json()
     assert data["status"] == "watching"
@@ -187,7 +187,7 @@ def test_watch_calendar():
 def test_get_event_by_id():
     """Test retrieving a specific event by its ID"""
     # Create an event first
-    create_res = client.post("/calendar/events", json={
+    create_res = client.post("/api/calendar/events", json={
         "summary": "Specific Event",
         "description": "Event to retrieve by ID",
         "start_time": "2023-10-30T14:00:00",
@@ -199,7 +199,7 @@ def test_get_event_by_id():
     event_id = create_res.json()["id"]
     
     # Get the event by ID
-    response = client.get(f"/calendar/events/{event_id}")
+    response = client.get(f"/api/calendar/events/{event_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == event_id
@@ -213,27 +213,27 @@ def test_get_event_by_id():
 
 def test_get_event_not_found():
     """Test getting a non-existent event returns 404"""
-    response = client.get("/calendar/events/999999")
+    response = client.get("/api/calendar/events/999999")
     assert response.status_code == 404
 
 def test_list_events_with_pagination():
     """Test listing events with pagination parameters"""
     # Create multiple events
     for i in range(5):
-        client.post("/calendar/events", json={
+        client.post("/api/calendar/events", json={
             "summary": f"Event {i}",
             "start_time": f"2023-11-{10+i:02d}T10:00:00",
             "end_time": f"2023-11-{10+i:02d}T11:00:00"
         })
     
     # Test with limit
-    response = client.get("/calendar/events?limit=3")
+    response = client.get("/api/calendar/events?limit=3")
     assert response.status_code == 200
     data = response.json()
     assert len(data) <= 3
     
     # Test with offset
-    response = client.get("/calendar/events?limit=2&offset=2")
+    response = client.get("/api/calendar/events?limit=2&offset=2")
     assert response.status_code == 200
     data = response.json()
     assert len(data) <= 2
@@ -241,22 +241,22 @@ def test_list_events_with_pagination():
 def test_list_events_with_status_filter():
     """Test filtering events by status"""
     # Create and then cancel an event
-    create_res = client.post("/calendar/events", json={
+    create_res = client.post("/api/calendar/events", json={
         "summary": "Event to Cancel",
         "start_time": "2023-11-20T10:00:00",
         "end_time": "2023-11-20T11:00:00"
     })
     event_id = create_res.json()["id"]
-    client.delete(f"/calendar/events/{event_id}")
+    client.delete(f"/api/calendar/events/{event_id}")
     
     # List without filter should not include cancelled
-    response = client.get("/calendar/events")
+    response = client.get("/api/calendar/events")
     assert response.status_code == 200
     for evt in response.json():
         assert evt["status"] != "cancelled"
     
     # List with cancelled filter should include it
-    response = client.get("/calendar/events?status=cancelled")
+    response = client.get("/api/calendar/events?status=cancelled")
     assert response.status_code == 200
     cancelled_events = response.json()
     assert any(evt["id"] == event_id for evt in cancelled_events)
@@ -264,7 +264,7 @@ def test_list_events_with_status_filter():
 def test_update_event_with_attendees():
     """Test updating event with new attendees"""
     # Create event
-    create_res = client.post("/calendar/events", json={
+    create_res = client.post("/api/calendar/events", json={
         "summary": "Meeting",
         "start_time": "2023-11-25T10:00:00",
         "end_time": "2023-11-25T11:00:00",
@@ -273,7 +273,7 @@ def test_update_event_with_attendees():
     event_id = create_res.json()["id"]
     
     # Update with new attendees
-    response = client.patch(f"/calendar/events/{event_id}", json={
+    response = client.patch(f"/api/calendar/events/{event_id}", json={
         "attendees": ["user1@example.com", "user2@example.com", "user3@example.com"]
     })
     assert response.status_code == 200
@@ -282,7 +282,7 @@ def test_update_event_with_attendees():
 
 def test_event_response_includes_all_fields():
     """Test that event responses include all required fields"""
-    response = client.post("/calendar/events", json={
+    response = client.post("/api/calendar/events", json={
         "summary": "Complete Event",
         "description": "Testing all fields",
         "start_time": "2023-12-01T10:00:00",
