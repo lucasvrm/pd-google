@@ -68,6 +68,7 @@ class MockCalendarService:
         if "description" in event_data: event["description"] = event_data["description"]
         if "start" in event_data: event["start"] = event_data["start"]
         if "end" in event_data: event["end"] = event_data["end"]
+        if "attendees" in event_data: event["attendees"] = event_data["attendees"]
 
         return event
 
@@ -182,3 +183,127 @@ def test_watch_calendar():
     assert data["status"] == "watching"
     assert data["channel_id"] is not None
     assert data["resource_id"] == "res-mock-123"
+
+def test_get_event_by_id():
+    """Test retrieving a specific event by its ID"""
+    # Create an event first
+    create_res = client.post("/calendar/events", json={
+        "summary": "Specific Event",
+        "description": "Event to retrieve by ID",
+        "start_time": "2023-10-30T14:00:00",
+        "end_time": "2023-10-30T15:00:00",
+        "attendees": ["user1@example.com", "user2@example.com"],
+        "create_meet_link": True
+    })
+    assert create_res.status_code == 201
+    event_id = create_res.json()["id"]
+    
+    # Get the event by ID
+    response = client.get(f"/calendar/events/{event_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == event_id
+    assert data["summary"] == "Specific Event"
+    assert data["description"] == "Event to retrieve by ID"
+    assert data["meet_link"] is not None
+    assert data["html_link"] is not None
+    assert data["organizer_email"] is not None
+    assert len(data["attendees"]) == 2
+    assert data["attendees"][0]["email"] in ["user1@example.com", "user2@example.com"]
+
+def test_get_event_not_found():
+    """Test getting a non-existent event returns 404"""
+    response = client.get("/calendar/events/999999")
+    assert response.status_code == 404
+
+def test_list_events_with_pagination():
+    """Test listing events with pagination parameters"""
+    # Create multiple events
+    for i in range(5):
+        client.post("/calendar/events", json={
+            "summary": f"Event {i}",
+            "start_time": f"2023-11-{10+i:02d}T10:00:00",
+            "end_time": f"2023-11-{10+i:02d}T11:00:00"
+        })
+    
+    # Test with limit
+    response = client.get("/calendar/events?limit=3")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) <= 3
+    
+    # Test with offset
+    response = client.get("/calendar/events?limit=2&offset=2")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) <= 2
+
+def test_list_events_with_status_filter():
+    """Test filtering events by status"""
+    # Create and then cancel an event
+    create_res = client.post("/calendar/events", json={
+        "summary": "Event to Cancel",
+        "start_time": "2023-11-20T10:00:00",
+        "end_time": "2023-11-20T11:00:00"
+    })
+    event_id = create_res.json()["id"]
+    client.delete(f"/calendar/events/{event_id}")
+    
+    # List without filter should not include cancelled
+    response = client.get("/calendar/events")
+    assert response.status_code == 200
+    for evt in response.json():
+        assert evt["status"] != "cancelled"
+    
+    # List with cancelled filter should include it
+    response = client.get("/calendar/events?status=cancelled")
+    assert response.status_code == 200
+    cancelled_events = response.json()
+    assert any(evt["id"] == event_id for evt in cancelled_events)
+
+def test_update_event_with_attendees():
+    """Test updating event with new attendees"""
+    # Create event
+    create_res = client.post("/calendar/events", json={
+        "summary": "Meeting",
+        "start_time": "2023-11-25T10:00:00",
+        "end_time": "2023-11-25T11:00:00",
+        "attendees": ["user1@example.com"]
+    })
+    event_id = create_res.json()["id"]
+    
+    # Update with new attendees
+    response = client.patch(f"/calendar/events/{event_id}", json={
+        "attendees": ["user1@example.com", "user2@example.com", "user3@example.com"]
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["attendees"]) == 3
+
+def test_event_response_includes_all_fields():
+    """Test that event responses include all required fields"""
+    response = client.post("/calendar/events", json={
+        "summary": "Complete Event",
+        "description": "Testing all fields",
+        "start_time": "2023-12-01T10:00:00",
+        "end_time": "2023-12-01T11:00:00",
+        "attendees": ["test@example.com"],
+        "create_meet_link": True
+    })
+    
+    assert response.status_code == 201
+    data = response.json()
+    
+    # Verify all required fields are present
+    assert "id" in data
+    assert "google_event_id" in data
+    assert "summary" in data
+    assert "description" in data
+    assert "start_time" in data
+    assert "end_time" in data
+    assert "meet_link" in data
+    assert "html_link" in data
+    assert "status" in data
+    assert "organizer_email" in data
+    assert "attendees" in data
+    assert isinstance(data["attendees"], list)

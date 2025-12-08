@@ -34,24 +34,73 @@ def get_calendar_service():
 
 # Pydantic Models
 class Attendee(BaseModel):
+    """
+    Represents an event attendee.
+    """
     email: str
-    responseStatus: Optional[str] = None
+    responseStatus: Optional[str] = None  # needsAction, declined, tentative, accepted
+    displayName: Optional[str] = None
+    organizer: Optional[bool] = False
+    self: Optional[bool] = False
+    optional: Optional[bool] = False
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "attendee@example.com",
+                "responseStatus": "accepted",
+                "displayName": "John Doe",
+                "optional": False
+            }
+        }
 
 class EventCreate(BaseModel):
+    """
+    Schema for creating a new calendar event.
+    """
     summary: str
     description: Optional[str] = None
     start_time: datetime
     end_time: datetime
-    attendees: Optional[List[str]] = [] # List of emails
+    attendees: Optional[List[str]] = []  # List of email addresses
     create_meet_link: bool = True
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "summary": "Sales Meeting - Client X",
+                "description": "Quarterly review and proposal presentation",
+                "start_time": "2024-01-15T14:00:00Z",
+                "end_time": "2024-01-15T15:00:00Z",
+                "attendees": ["sales@company.com", "client@example.com"],
+                "create_meet_link": True
+            }
+        }
+
 class EventUpdate(BaseModel):
+    """
+    Schema for updating an existing calendar event.
+    All fields are optional - only provided fields will be updated.
+    """
     summary: Optional[str] = None
     description: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    attendees: Optional[List[str]] = None  # List of email addresses
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "summary": "Updated Meeting Title",
+                "start_time": "2024-01-15T15:00:00Z"
+            }
+        }
 
 class EventResponse(BaseModel):
+    """
+    Standard response schema for calendar events.
+    Contains all information needed by the frontend, including Meet link.
+    """
     id: Optional[int] = None
     google_event_id: str
     summary: str
@@ -60,9 +109,58 @@ class EventResponse(BaseModel):
     end_time: datetime
     meet_link: Optional[str] = None
     html_link: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # confirmed, tentative, cancelled
+    organizer_email: Optional[str] = None
+    attendees: Optional[List[Attendee]] = []
 
-@router.post("/events", response_model=EventResponse, status_code=201)
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": 1,
+                "google_event_id": "evt_abc123xyz",
+                "summary": "Sales Meeting - Client X",
+                "description": "Quarterly review and proposal presentation",
+                "start_time": "2024-01-15T14:00:00+00:00",
+                "end_time": "2024-01-15T15:00:00+00:00",
+                "meet_link": "https://meet.google.com/abc-defg-hij",
+                "html_link": "https://calendar.google.com/event?eid=abc123",
+                "status": "confirmed",
+                "organizer_email": "organizer@company.com",
+                "attendees": [
+                    {
+                        "email": "attendee@example.com",
+                        "responseStatus": "accepted",
+                        "displayName": "John Doe"
+                    }
+                ]
+            }
+        }
+
+# Helper functions
+def parse_attendees_from_google(attendees_data: Optional[List[dict]]) -> List[Attendee]:
+    """
+    Parse attendees from Google Calendar API format to Pydantic models.
+    """
+    if not attendees_data:
+        return []
+    
+    result = []
+    for att in attendees_data:
+        result.append(Attendee(
+            email=att.get('email', ''),
+            responseStatus=att.get('responseStatus'),
+            displayName=att.get('displayName'),
+            organizer=att.get('organizer', False),
+            self=att.get('self', False),
+            optional=att.get('optional', False)
+        ))
+    return result
+
+# API Endpoints
+@router.post("/events", response_model=EventResponse, status_code=201,
+             summary="Create Calendar Event",
+             description="Creates a new event in Google Calendar with optional Google Meet link. "
+                        "The event is automatically synced to the local database.")
 def create_event(
     event_in: EventCreate,
     db: Session = Depends(get_db),
@@ -70,6 +168,17 @@ def create_event(
 ):
     """
     Create a new event in Google Calendar and save to local DB.
+    
+    **Parameters:**
+    - **summary**: Event title/subject (required)
+    - **description**: Event details/notes (optional)
+    - **start_time**: Event start datetime in ISO format with timezone
+    - **end_time**: Event end datetime in ISO format with timezone
+    - **attendees**: List of email addresses to invite
+    - **create_meet_link**: Whether to generate a Google Meet link (default: true)
+    
+    **Returns:**
+    - Complete event details including meet_link and html_link
     """
     # 1. Prepare Google API payload
     google_event_body = {
@@ -123,6 +232,9 @@ def create_event(
     db.commit()
     db.refresh(db_event)
 
+    # 5. Parse attendees for response
+    attendees_list = parse_attendees_from_google(google_event.get('attendees', []))
+
     return EventResponse(
         id=db_event.id,
         google_event_id=db_event.google_event_id,
@@ -132,32 +244,73 @@ def create_event(
         end_time=db_event.end_time,
         meet_link=db_event.meet_link,
         html_link=db_event.html_link,
-        status=db_event.status
+        status=db_event.status,
+        organizer_email=db_event.organizer_email,
+        attendees=attendees_list
     )
 
-@router.get("/events", response_model=List[EventResponse])
+@router.get("/events", response_model=List[EventResponse],
+            summary="List Calendar Events",
+            description="Retrieves calendar events from the local database mirror. "
+                       "Supports filtering by time range, status, and pagination.")
 def list_events(
     time_min: Optional[datetime] = None,
     time_max: Optional[datetime] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
     db: Session = Depends(get_db)
 ):
     """
-    List events from Local Database (Phase 4).
-    Sync is handled via Webhooks.
+    List events from Local Database (synced from Google Calendar).
+    
+    **Query Parameters:**
+    - **time_min**: Filter events starting after this datetime (ISO format)
+    - **time_max**: Filter events ending before this datetime (ISO format)
+    - **status**: Filter by event status (confirmed, tentative, cancelled)
+    - **limit**: Maximum number of results to return (default: 100, max: 500)
+    - **offset**: Number of results to skip for pagination (default: 0)
+    
+    **Returns:**
+    - List of events matching the filters, ordered by start time
+    
+    **Note:** 
+    - By default, cancelled events are excluded unless explicitly requested via status filter
+    - Events are synced from Google Calendar via webhooks
     """
-    query = db.query(models.CalendarEvent).filter(
-        models.CalendarEvent.status != 'cancelled'
-    )
+    # Limit the maximum results to prevent overload
+    if limit > 500:
+        limit = 500
+    
+    # Build query
+    query = db.query(models.CalendarEvent)
+    
+    # Apply filters
+    if status:
+        query = query.filter(models.CalendarEvent.status == status)
+    else:
+        # By default, exclude cancelled events
+        query = query.filter(models.CalendarEvent.status != 'cancelled')
 
     if time_min:
         query = query.filter(models.CalendarEvent.start_time >= time_min)
     if time_max:
         query = query.filter(models.CalendarEvent.end_time <= time_max)
 
-    events = query.order_by(models.CalendarEvent.start_time).all()
+    # Apply pagination and ordering
+    events = query.order_by(models.CalendarEvent.start_time).offset(offset).limit(limit).all()
 
     response_list = []
     for event in events:
+        # Parse attendees from JSON string
+        attendees_list = []
+        if event.attendees:
+            try:
+                attendees_data = json.loads(event.attendees)
+                attendees_list = parse_attendees_from_google(attendees_data)
+            except (json.JSONDecodeError, TypeError):
+                attendees_list = []
+        
         response_list.append(EventResponse(
             id=event.id,
             google_event_id=event.google_event_id,
@@ -167,26 +320,106 @@ def list_events(
             end_time=event.end_time,
             meet_link=event.meet_link,
             html_link=event.html_link,
-            status=event.status
+            status=event.status,
+            organizer_email=event.organizer_email,
+            attendees=attendees_list
         ))
 
     return response_list
 
-@router.patch("/events/{event_id}")
+@router.get("/events/{event_id}", response_model=EventResponse,
+            summary="Get Event Details",
+            description="Retrieves detailed information about a specific calendar event by its ID.")
+def get_event(
+    event_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get complete details of a specific event.
+    
+    **Parameters:**
+    - **event_id**: Internal database ID or Google event ID
+    
+    **Returns:**
+    - Complete event details including:
+      - meet_link: Google Meet video conference link (if available)
+      - html_link: Link to view event in Google Calendar
+      - summary: Event title
+      - description: Event details
+      - start_time & end_time: Event datetime with timezone
+      - status: Event status (confirmed, tentative, cancelled)
+      - organizer_email: Email of the event organizer
+      - attendees: List of all invited participants with their response status
+    
+    **Note:**
+    - The meet_link field contains the Google Meet link when create_meet_link was true during creation
+    - Cancelled events can still be retrieved via this endpoint
+    """
+    # Try to find by internal ID first, then by Google event ID
+    db_event = None
+    if event_id.isdigit():
+        db_event = db.query(models.CalendarEvent).filter(models.CalendarEvent.id == int(event_id)).first()
+    
+    if not db_event:
+        # Try finding by google_event_id
+        db_event = db.query(models.CalendarEvent).filter(models.CalendarEvent.google_event_id == event_id).first()
+    
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    # Parse attendees from JSON string
+    attendees_list = []
+    if db_event.attendees:
+        try:
+            attendees_data = json.loads(db_event.attendees)
+            attendees_list = parse_attendees_from_google(attendees_data)
+        except (json.JSONDecodeError, TypeError):
+            attendees_list = []
+    
+    return EventResponse(
+        id=db_event.id,
+        google_event_id=db_event.google_event_id,
+        summary=db_event.summary or "No Title",
+        description=db_event.description,
+        start_time=db_event.start_time,
+        end_time=db_event.end_time,
+        meet_link=db_event.meet_link,
+        html_link=db_event.html_link,
+        status=db_event.status,
+        organizer_email=db_event.organizer_email,
+        attendees=attendees_list
+    )
+
+@router.patch("/events/{event_id}", response_model=EventResponse,
+              summary="Update Calendar Event",
+              description="Updates an existing calendar event. All fields are optional - "
+                         "only the provided fields will be updated in both Google Calendar and local database.")
 def update_event(
-    event_id: str, # Google ID or DB ID? Requirements imply managing by ID. Let's assume DB ID for URL, but we need Google ID.
+    event_id: str,
     event_in: EventUpdate,
     db: Session = Depends(get_db),
     service: GoogleCalendarService = Depends(get_calendar_service)
 ):
     """
-    Update an event. Accepts DB ID.
+    Update an event. Accepts both internal DB ID and Google event ID.
+    
+    **Parameters:**
+    - **event_id**: Internal database ID or Google event ID
+    - **Request body**: Fields to update (all optional)
+      - summary: New event title
+      - description: New event description
+      - start_time: New start datetime
+      - end_time: New end datetime
+      - attendees: New list of attendee emails (replaces existing)
+    
+    **Returns:**
+    - Updated event details with all fields
+    
+    **Note:**
+    - Changes are synchronized to Google Calendar immediately
+    - Only provided fields are updated; others remain unchanged
     """
     # Find in DB first to get Google ID
-    # Note: If we passed Google ID in URL, we wouldn't need DB lookup, but typical REST uses internal ID.
-    # Let's try to support both or stick to Internal ID.
-
-    # Check if event_id is numeric (DB ID)
     db_event = None
     if event_id.isdigit():
         db_event = db.query(models.CalendarEvent).filter(models.CalendarEvent.id == int(event_id)).first()
@@ -198,40 +431,89 @@ def update_event(
     if not db_event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Prepare update body
+    # Prepare update body for Google API
     body = {}
-    if event_in.summary: body['summary'] = event_in.summary
-    if event_in.description: body['description'] = event_in.description
-    if event_in.start_time:
+    if event_in.summary is not None: 
+        body['summary'] = event_in.summary
+    if event_in.description is not None: 
+        body['description'] = event_in.description
+    if event_in.start_time is not None:
         body['start'] = {'dateTime': event_in.start_time.isoformat(), 'timeZone': 'UTC'}
-    if event_in.end_time:
+    if event_in.end_time is not None:
         body['end'] = {'dateTime': event_in.end_time.isoformat(), 'timeZone': 'UTC'}
+    if event_in.attendees is not None:
+        body['attendees'] = [{'email': email} for email in event_in.attendees]
 
     if not body:
-         return {"message": "No changes requested"}
+        raise HTTPException(status_code=400, detail="No fields provided for update")
 
-    # Update Google
+    # Update Google Calendar
     try:
         updated_google = service.update_event(db_event.google_event_id, body)
     except Exception as e:
-         raise HTTPException(status_code=500, detail=f"Google API Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Google API Error: {str(e)}")
 
-    # Update DB
-    if event_in.summary: db_event.summary = event_in.summary
-    if event_in.description: db_event.description = event_in.description
-    if event_in.start_time: db_event.start_time = event_in.start_time
-    if event_in.end_time: db_event.end_time = event_in.end_time
+    # Update local DB with data from Google response
+    if event_in.summary is not None: 
+        db_event.summary = updated_google.get('summary', event_in.summary)
+    if event_in.description is not None: 
+        db_event.description = updated_google.get('description', event_in.description)
+    if event_in.start_time is not None: 
+        db_event.start_time = event_in.start_time
+    if event_in.end_time is not None: 
+        db_event.end_time = event_in.end_time
+    
+    # Update attendees and other metadata from Google response
+    if 'attendees' in updated_google:
+        db_event.attendees = json.dumps(updated_google.get('attendees', []))
+    
+    db_event.status = updated_google.get('status', db_event.status)
+    db_event.organizer_email = updated_google.get('organizer', {}).get('email', db_event.organizer_email)
 
     db.commit()
+    db.refresh(db_event)
 
-    return {"status": "updated", "google_event": updated_google}
+    # Parse attendees for response
+    attendees_list = parse_attendees_from_google(updated_google.get('attendees', []))
 
-@router.delete("/events/{event_id}")
+    return EventResponse(
+        id=db_event.id,
+        google_event_id=db_event.google_event_id,
+        summary=db_event.summary,
+        description=db_event.description,
+        start_time=db_event.start_time,
+        end_time=db_event.end_time,
+        meet_link=db_event.meet_link,
+        html_link=db_event.html_link,
+        status=db_event.status,
+        organizer_email=db_event.organizer_email,
+        attendees=attendees_list
+    )
+
+@router.delete("/events/{event_id}", response_model=EventResponse,
+               summary="Cancel Calendar Event",
+               description="Cancels a calendar event (soft delete). The event is marked as cancelled "
+                          "in both Google Calendar and the local database but not permanently deleted.")
 def delete_event(
     event_id: str,
     db: Session = Depends(get_db),
     service: GoogleCalendarService = Depends(get_calendar_service)
 ):
+    """
+    Cancel/delete an event (soft delete - sets status to 'cancelled').
+    
+    **Parameters:**
+    - **event_id**: Internal database ID or Google event ID
+    
+    **Returns:**
+    - The cancelled event details with status='cancelled'
+    
+    **Note:**
+    - This performs a soft delete - the event remains in the database with status='cancelled'
+    - Cancelled events are excluded from default list queries
+    - The event is also cancelled in Google Calendar
+    - Attendees will be notified of the cancellation by Google
+    """
     # Find in DB
     db_event = None
     if event_id.isdigit():
@@ -247,23 +529,50 @@ def delete_event(
         service.delete_event(db_event.google_event_id)
     except Exception as e:
         # If 410 gone, we just update local
-         print(f"Delete warning: {e}")
+        print(f"Delete warning: {e}")
 
-    # Update DB status (Soft delete or status cancelled)
+    # Update DB status (Soft delete)
     db_event.status = 'cancelled'
-    # Optional: db.delete(db_event) if we want hard delete
     db.commit()
+    db.refresh(db_event)
 
-    return {"status": "cancelled"}
+    # Parse attendees for response
+    attendees_list = []
+    if db_event.attendees:
+        try:
+            attendees_data = json.loads(db_event.attendees)
+            attendees_list = parse_attendees_from_google(attendees_data)
+        except (json.JSONDecodeError, TypeError):
+            attendees_list = []
 
-@router.post("/watch", status_code=201)
+    return EventResponse(
+        id=db_event.id,
+        google_event_id=db_event.google_event_id,
+        summary=db_event.summary or "No Title",
+        description=db_event.description,
+        start_time=db_event.start_time,
+        end_time=db_event.end_time,
+        meet_link=db_event.meet_link,
+        html_link=db_event.html_link,
+        status=db_event.status,
+        organizer_email=db_event.organizer_email,
+        attendees=attendees_list
+    )
+
+@router.post("/watch", status_code=201, tags=["internal"],
+             summary="Register Webhook Channel (Internal)",
+             description="Internal endpoint for manually registering a webhook channel for calendar synchronization. "
+                        "This is typically handled automatically by the scheduler service.")
 def watch_calendar(
     db: Session = Depends(get_db),
     service: GoogleCalendarService = Depends(get_calendar_service)
 ):
     """
     Manually register a webhook channel for the primary calendar.
-    For development/testing purposes.
+    
+    **Note:** This is an internal endpoint used for development/testing purposes.
+    The scheduler service automatically manages webhook channel registration and renewal.
+    Frontend applications should not need to call this endpoint.
     """
     import uuid
     from config import config
