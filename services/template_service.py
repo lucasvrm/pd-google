@@ -29,8 +29,6 @@ class TemplateService:
         # but let's be robust: sort by 'level' or ensure we process parents first.
         # Since we don't have 'level', we can loop.
 
-        nodes = sorted(template.nodes, key=lambda x: (x.parent_id if x.parent_id else 0, x.order))
-
         # Better approach:
         # 1. Get all nodes.
         # 2. Process nodes with parent_id=None (Root level relative to entity).
