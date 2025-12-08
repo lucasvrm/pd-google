@@ -16,5 +16,8 @@ class Config:
     
     # CORS configuration
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://pipedesk.vercel.app")
+    
+    # Calendar event retention
+    CALENDAR_EVENT_RETENTION_DAYS = int(os.getenv("CALENDAR_EVENT_RETENTION_DAYS", "180"))  # 180 days default (6 months)
 
 config = Config()
