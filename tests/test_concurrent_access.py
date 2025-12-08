@@ -49,6 +49,9 @@ def override_get_db():
 @pytest.fixture(scope="module", autouse=True)
 def setup_module():
     """Setup test database and seed data."""
+    os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
+    os.environ["USE_MOCK_DRIVE"] = "true"
+
     # Override dependency for this module
     from routers.drive import get_db
     app.dependency_overrides[get_db] = override_get_db
@@ -59,11 +62,11 @@ def setup_module():
     db = TestingSessionLocal()
     
     # Company
-    company1 = models.Company(id="comp-concurrent-123", name="Concurrent Test Company", fantasy_name="Concurrent Fantasy")
+    company1 = models.Company(id="comp-concurrent-123", name="Concurrent Test Company")
     db.add(company1)
     
     # Lead
-    lead1 = models.Lead(id="lead-concurrent-001", title="Concurrent Test Lead", company_id="comp-concurrent-123")
+    lead1 = models.Lead(id="lead-concurrent-001", title="Concurrent Test Lead", qualified_company_id="comp-concurrent-123")
     db.add(lead1)
     
     # Deal
@@ -124,7 +127,7 @@ def make_request(entity_type, entity_id, request_num):
         tuple: (request_num, response_status, response_data, error)
     """
     try:
-        response = client.get(f"/drive/{entity_type}/{entity_id}")
+        response = client.get(f"/api/drive/{entity_type}/{entity_id}")
         return (request_num, response.status_code, response.json(), None)
     except Exception as e:
         return (request_num, None, None, str(e))

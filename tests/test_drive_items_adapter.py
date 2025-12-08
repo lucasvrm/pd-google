@@ -50,7 +50,7 @@ def setup_module(module):
     company = models.Company(id="comp-items-1", name="Items Test Company")
     db.add(company)
 
-    lead = models.Lead(id="lead-items-1", title="Items Test Lead", company_id="comp-items-1")
+    lead = models.Lead(id="lead-items-1", title="Items Test Lead", qualified_company_id="comp-items-1")
     db.add(lead)
 
     deal = models.Deal(id="deal-items-1", title="Items Test Deal", company_id="comp-items-1")
@@ -95,7 +95,8 @@ def client():
     mock_service = GoogleDriveService()
 
     with patch("routers.drive_items_adapter.drive_service", mock_service), \
-         patch("services.hierarchy_service.config.USE_MOCK_DRIVE", True):
+         patch("services.hierarchy_service.config.USE_MOCK_DRIVE", True), \
+         patch("services.hierarchy_service.config.DRIVE_ROOT_FOLDER_ID", "mock-root-id"):
         yield TestClient(app)
 
 

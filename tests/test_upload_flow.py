@@ -1,4 +1,9 @@
 
+import os
+# Set environment variables BEFORE any other imports
+os.environ["USE_MOCK_DRIVE"] = "true"
+os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -6,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 from database import Base
 from main import app
 import models
-import os
 import json
 import io
 from routers.drive import get_db as original_get_db
@@ -44,7 +48,7 @@ def setup_module(module):
     company = models.Company(id="comp-upload-1", name="Upload Test Company")
     db.add(company)
 
-    lead = models.Lead(id="lead-upload-1", title="Upload Test Lead", company_id="comp-upload-1")
+    lead = models.Lead(id="lead-upload-1", title="Upload Test Lead", qualified_company_id="comp-upload-1")
     db.add(lead)
 
     deal = models.Deal(id="deal-upload-1", title="Upload Test Deal", company_id="comp-upload-1")
@@ -98,7 +102,7 @@ class TestUploadFlow:
     def test_upload_small_file_to_lead(self, client):
         """Test uploading a small file to a lead entity"""
         # Step 1: Initialize folder structure
-        response = client.get("/drive/lead/lead-upload-1", headers={"x-user-role": "admin"})
+        response = client.get("/api/drive/lead/lead-upload-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         assert response.status_code == 200
         
         # Step 2: Upload a small file
@@ -110,9 +114,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/lead/lead-upload-1/upload",
+            "/api/drive/lead/lead-upload-1/upload",
             files=files,
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         # Step 3: Verify response
@@ -156,7 +160,7 @@ class TestUploadFlow:
     def test_upload_file_to_deal(self, client):
         """Test uploading a file to a deal entity"""
         # Step 1: Initialize folder structure
-        response = client.get("/drive/deal/deal-upload-1", headers={"x-user-role": "manager"})
+        response = client.get("/api/drive/deal/deal-upload-1", headers={"x-user-role": "manager", "x-user-id": "test_user"})
         assert response.status_code == 200
         
         # Step 2: Upload a file
@@ -168,9 +172,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/deal/deal-upload-1/upload",
+            "/api/drive/deal/deal-upload-1/upload",
             files=files,
-            headers={"x-user-role": "manager"}
+            headers={"x-user-role": "manager", "x-user-id": "test_user"}
         )
         
         # Step 3: Verify response
@@ -197,7 +201,7 @@ class TestUploadFlow:
     def test_upload_without_role_uses_default_permission(self, client):
         """Test that upload without role header uses fallback permission"""
         # Initialize structure first
-        client.get("/drive/lead/lead-upload-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-upload-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         # Upload without role header
         file_content = b"No role file"
@@ -206,7 +210,7 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/lead/lead-upload-1/upload",
+            "/api/drive/lead/lead-upload-1/upload",
             files=files
         )
         
@@ -218,7 +222,7 @@ class TestUploadFlow:
     def test_upload_blocked_for_reader_role(self, client):
         """Test that reader role is blocked from uploading files"""
         # Initialize structure first
-        client.get("/drive/deal/deal-upload-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/deal/deal-upload-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         # Try to upload as reader
         file_content = b"Should be blocked"
@@ -227,9 +231,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/deal/deal-upload-1/upload",
+            "/api/drive/deal/deal-upload-1/upload",
             files=files,
-            headers={"x-user-role": "client"}
+            headers={"x-user-role": "client", "x-user-id": "test_user"}
         )
         
         # Should be forbidden
@@ -244,9 +248,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/lead/nonexistent-lead/upload",
+            "/api/drive/lead/nonexistent-lead/upload",
             files=files,
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         # Should fail because structure was never initialized
@@ -256,7 +260,7 @@ class TestUploadFlow:
     def test_upload_file_metadata_persists_in_mock_drive(self, client):
         """Test that uploaded file metadata is stored in mock drive JSON"""
         # Initialize and upload
-        client.get("/drive/lead/lead-upload-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/lead/lead-upload-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         file_content = b"Persistent content"
         file_name = "persistent.txt"
@@ -265,9 +269,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/lead/lead-upload-1/upload",
+            "/api/drive/lead/lead-upload-1/upload",
             files=files,
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         
         assert response.status_code == 200
@@ -286,16 +290,16 @@ class TestUploadFlow:
     def test_multiple_file_uploads(self, client):
         """Test uploading multiple files to the same entity"""
         # Initialize structure
-        client.get("/drive/deal/deal-upload-1", headers={"x-user-role": "admin"})
+        client.get("/api/drive/deal/deal-upload-1", headers={"x-user-role": "admin", "x-user-id": "test_user"})
         
         # Upload first file
         files1 = {
             "file": ("file1.txt", io.BytesIO(b"Content 1"), "text/plain")
         }
         response1 = client.post(
-            "/drive/deal/deal-upload-1/upload",
+            "/api/drive/deal/deal-upload-1/upload",
             files=files1,
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response1.status_code == 200
         
@@ -304,9 +308,9 @@ class TestUploadFlow:
             "file": ("file2.txt", io.BytesIO(b"Content 2"), "text/plain")
         }
         response2 = client.post(
-            "/drive/deal/deal-upload-1/upload",
+            "/api/drive/deal/deal-upload-1/upload",
             files=files2,
-            headers={"x-user-role": "admin"}
+            headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response2.status_code == 200
         
@@ -322,7 +326,7 @@ class TestUploadFlow:
     def test_upload_analyst_role(self, client):
         """Test that analyst role (writer) can upload files"""
         # Initialize structure
-        client.get("/drive/lead/lead-upload-1", headers={"x-user-role": "analyst"})
+        client.get("/api/drive/lead/lead-upload-1", headers={"x-user-role": "analyst", "x-user-id": "test_user"})
         
         # Upload file as analyst
         file_content = b"Analyst upload"
@@ -331,9 +335,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/lead/lead-upload-1/upload",
+            "/api/drive/lead/lead-upload-1/upload",
             files=files,
-            headers={"x-user-role": "analyst"}
+            headers={"x-user-role": "analyst", "x-user-id": "test_user"}
         )
         
         assert response.status_code == 200
@@ -343,7 +347,7 @@ class TestUploadFlow:
     def test_upload_new_business_role(self, client):
         """Test that new_business role (writer) can upload files"""
         # Initialize structure
-        client.get("/drive/deal/deal-upload-1", headers={"x-user-role": "new_business"})
+        client.get("/api/drive/deal/deal-upload-1", headers={"x-user-role": "new_business", "x-user-id": "test_user"})
         
         # Upload file as new_business
         file_content = b"New business upload"
@@ -352,9 +356,9 @@ class TestUploadFlow:
         }
         
         response = client.post(
-            "/drive/deal/deal-upload-1/upload",
+            "/api/drive/deal/deal-upload-1/upload",
             files=files,
-            headers={"x-user-role": "new_business"}
+            headers={"x-user-role": "new_business", "x-user-id": "test_user"}
         )
         
         assert response.status_code == 200

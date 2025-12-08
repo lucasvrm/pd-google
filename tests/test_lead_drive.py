@@ -45,7 +45,7 @@ def client():
     db.add(company)
 
     # Create Lead
-    lead = models.Lead(id="lead-test-1", title="My Awesome Lead", company_id="comp-lead-test")
+    lead = models.Lead(id="lead-test-1", title="My Awesome Lead", qualified_company_id="comp-lead-test")
     db.add(lead)
 
     # Create Template
