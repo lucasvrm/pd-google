@@ -14,6 +14,7 @@ from typing import Optional
 from services.google_calendar_service import GoogleCalendarService
 from services.google_drive_real import GoogleDriveRealService
 from utils.retry import exponential_backoff_retry
+from utils.structured_logging import calendar_logger
 import logging
 
 router = APIRouter()
@@ -209,30 +210,57 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
     """
     Process Calendar Webhook
     """
-    logger.info(f"Processing Calendar Webhook for {channel.channel_id}")
+    calendar_logger.info(
+        action="webhook_received",
+        status="processing",
+        message=f"Processing Calendar webhook for channel {channel.channel_id}",
+        resource_state=state
+    )
 
     if not channel.active:
-         return {"status": "ignored", "reason": "inactive_channel"}
+        calendar_logger.warning(
+            action="webhook_received",
+            status="ignored",
+            message=f"Inactive channel: {channel.channel_id}"
+        )
+        return {"status": "ignored", "reason": "inactive_channel"}
 
     # Strict webhook token validation
     if config.WEBHOOK_SECRET:
         if token != config.WEBHOOK_SECRET:
-            logger.warning(f"Invalid webhook token for Calendar channel {channel.channel_id}")
+            calendar_logger.warning(
+                action="webhook_received",
+                status="error",
+                message=f"Invalid webhook token for Calendar channel {channel.channel_id}"
+            )
             raise HTTPException(
                 status_code=403,
                 detail="Invalid webhook token"
             )
 
     if state == "sync":
-        logger.info("Calendar Sync Handshake")
+        calendar_logger.info(
+            action="webhook_sync",
+            status="success",
+            message="Calendar sync handshake successful"
+        )
         return {"status": "ok"}
 
     # Trigger Sync Logic
     try:
         service = GoogleCalendarService()
         sync_calendar_events(db, service, channel)
+        calendar_logger.info(
+            action="webhook_sync",
+            status="success",
+            message=f"Calendar sync completed for channel {channel.channel_id}"
+        )
     except Exception as e:
-        logger.error(f"Error syncing calendar: {e}", exc_info=True)
+        calendar_logger.error(
+            action="webhook_sync",
+            message=f"Error syncing calendar for channel {channel.channel_id}",
+            error=e
+        )
         return {"status": "error", "detail": str(e)}
 
     return {"status": "ok", "type": "calendar"}
@@ -242,7 +270,12 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
     """
     Core Two-Way Sync Logic using Sync Token for Calendar.
     """
-    logger.info(f"Syncing calendar {channel.calendar_id} with token {channel.sync_token}")
+    calendar_logger.info(
+        action="sync",
+        status="started",
+        message=f"Syncing calendar {channel.calendar_id}",
+        has_sync_token=bool(channel.sync_token)
+    )
 
     page_token = None
     new_sync_token = None
@@ -267,12 +300,21 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         except Exception as e:
             error_msg = str(e)
             if '410' in error_msg or 'sync token is no longer valid' in error_msg.lower():
-                logger.warning("Sync token invalid (410). Performing full sync.")
+                calendar_logger.warning(
+                    action="sync",
+                    status="warning",
+                    message="Sync token invalid (410). Performing full sync.",
+                    error_type="SyncTokenExpired"
+                )
                 channel.sync_token = None
                 db.commit()
                 continue
             else:
-                logger.error(f"Google API Error during sync: {e}")
+                calendar_logger.error(
+                    action="sync",
+                    message="Google API Error during sync",
+                    error=e
+                )
                 raise e
 
         items = result.get('items', [])
@@ -327,7 +369,12 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         channel.sync_token = new_sync_token
         channel.updated_at = datetime.now(timezone.utc)
         db.commit()
-        logger.info(f"Sync complete. New token: {new_sync_token}")
+        calendar_logger.info(
+            action="sync",
+            status="success",
+            message=f"Sync complete. Processed {len(items) if items else 0} items.",
+            new_sync_token=bool(new_sync_token)
+        )
 
 
 @router.get("/webhooks/google-drive/status")

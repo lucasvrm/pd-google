@@ -7,6 +7,7 @@ import json
 
 from database import SessionLocal
 from services.google_calendar_service import GoogleCalendarService
+from utils.structured_logging import calendar_logger
 import models
 from config import config
 
@@ -205,7 +206,20 @@ def create_event(
     # 2. Call Google API
     try:
         google_event = service.create_event(google_event_body)
+        calendar_logger.info(
+            action="create_event",
+            status="success",
+            message=f"Created event: {event_in.summary}",
+            google_event_id=google_event.get('id'),
+            attendee_count=len(event_in.attendees),
+            has_meet_link=bool(google_event.get('hangoutLink'))
+        )
     except Exception as e:
+        calendar_logger.error(
+            action="create_event",
+            message=f"Failed to create event: {event_in.summary}",
+            error=e
+        )
         raise HTTPException(status_code=500, detail=f"Google Calendar API Error: {str(e)}")
 
     # 3. Extract Data
@@ -448,7 +462,19 @@ def update_event(
     # Update Google Calendar
     try:
         updated_google = service.update_event(db_event.google_event_id, body)
+        calendar_logger.info(
+            action="update_event",
+            status="success",
+            message=f"Updated event: {db_event.summary}",
+            google_event_id=db_event.google_event_id
+        )
     except Exception as e:
+        calendar_logger.error(
+            action="update_event",
+            message=f"Failed to update event: {db_event.google_event_id}",
+            error=e,
+            google_event_id=db_event.google_event_id
+        )
         raise HTTPException(status_code=500, detail=f"Google API Error: {str(e)}")
 
     # Update local DB with data from Google response
@@ -525,8 +551,20 @@ def delete_event(
     # Delete from Google
     try:
         service.delete_event(db_event.google_event_id)
+        calendar_logger.info(
+            action="delete_event",
+            status="success",
+            message=f"Cancelled event: {db_event.summary}",
+            google_event_id=db_event.google_event_id
+        )
     except Exception as e:
         # If 410 gone, we just update local
+        calendar_logger.warning(
+            action="delete_event",
+            status="warning",
+            message=f"Event already deleted from Google: {db_event.google_event_id}",
+            google_event_id=db_event.google_event_id
+        )
         print(f"Delete warning: {e}")
 
     # Update DB status (Soft delete)
