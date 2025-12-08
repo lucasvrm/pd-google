@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Add parent directory to sys.path to allow importing modules from root
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 import models
