@@ -640,6 +640,29 @@ def watch_calendar(
     )
     db.add(sync_state)
     db.commit()
+    db.refresh(sync_state)
+    
+    # Perform initial sync to populate events
+    from routers.webhooks import sync_calendar_events
+    try:
+        calendar_logger.info(
+            action="watch",
+            status="performing_initial_sync",
+            message=f"Performing initial sync for channel {channel_id}"
+        )
+        sync_calendar_events(db, service, sync_state)
+        calendar_logger.info(
+            action="watch",
+            status="success",
+            message=f"Initial sync completed for channel {channel_id}"
+        )
+    except Exception as e:
+        calendar_logger.error(
+            action="watch",
+            message=f"Initial sync failed for channel {channel_id}",
+            error=e
+        )
+        # Don't fail the watch creation if sync fails - channel is still active
 
     return {
         "status": "watching",
