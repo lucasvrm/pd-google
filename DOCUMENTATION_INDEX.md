@@ -16,10 +16,18 @@ Este repositório contém a documentação completa do levantamento da integraç
 - Top 10 próximos passos
 
 ### Para Desenvolvedores Frontend (10 min)
-👉 Leia: **[ARCHITECTURE_DIAGRAM.md](./ARCHITECTURE_DIAGRAM.md)**
+👉 Leia primeiro: **[CALENDAR_API.md](./CALENDAR_API.md)** ⭐ **NOVO**
+- **Documentação completa da API Calendar & Meet**
+- Endpoints REST prontos para consumo
+- Exemplos de request/response
+- Como obter e usar meet_link
+- Paginação, filtros e buscas
+- Casos de uso comuns (JavaScript)
+- Tratamento de erros
+
+Em seguida: **[ARCHITECTURE_DIAGRAM.md](./ARCHITECTURE_DIAGRAM.md)**
 - Diagramas visuais da arquitetura
 - 4 fluxos de dados principais
-- Contratos de API (request/response)
 - Variáveis de ambiente necessárias
 
 ### Para Desenvolvedores Backend (30 min)
@@ -33,6 +41,32 @@ Este repositório contém a documentação completa do levantamento da integraç
 ---
 
 ## 📄 Documentos Detalhados
+
+### 0. 📚 CALENDAR_API.md ⭐ **NOVO**
+**540+ linhas | Documentação Completa da API**
+
+**Conteúdo:**
+- 📋 Overview e recursos principais
+- 📊 Modelos de dados (Attendee, EventResponse)
+- 🔌 **5 Endpoints REST documentados:**
+  1. **POST /api/calendar/events** - Criar evento com Meet
+  2. **GET /api/calendar/events** - Listar eventos (filtros + paginação)
+  3. **GET /api/calendar/events/{id}** - Detalhes de evento
+  4. **PATCH /api/calendar/events/{id}** - Atualizar evento
+  5. **DELETE /api/calendar/events/{id}** - Cancelar evento
+- 💡 **Casos de uso comuns** com exemplos JavaScript
+- ⚠️ Tratamento de erros e códigos HTTP
+- 🔄 Como funciona a sincronização
+- ✅ Melhores práticas
+- 🔗 **Como obter e usar o meet_link** (destaque especial)
+
+**Público:** **Desenvolvedores Frontend (prioridade), Backend**
+
+**Tempo de Leitura:** ~15 minutos
+
+**Status:** ✅ Completo e atualizado (Dezembro 2024)
+
+---
 
 ### 1. 🎯 PHASE_0_SUMMARY.md
 **323 linhas | Resumo Executivo**
@@ -182,23 +216,27 @@ Testes Automatizados:        █████████████████
 
 | Métrica | Valor |
 |---------|-------|
-| **Linhas de código Calendar** | ~500 linhas |
-| **Endpoints REST** | 5 |
+| **Linhas de código Calendar** | ~800 linhas |
+| **Endpoints REST** | 6 (5 públicos + 1 interno) |
 | **Métodos GoogleCalendarService** | 8 |
 | **Tabelas no banco** | 2 |
-| **Testes automatizados** | 5 (100% ✅) |
-| **Documentação produzida** | 1.282 linhas |
+| **Testes automatizados** | 11 (100% ✅) |
+| **Documentação produzida** | 2.000+ linhas |
 
 ### 🏆 Componentes 100% Prontos
 
 1. ✅ **GoogleCalendarService** - 8 métodos CRUD + Watch
-2. ✅ **Router Calendar** - 5 endpoints REST
+2. ✅ **Router Calendar** - 5 endpoints REST + 1 interno
 3. ✅ **Webhooks** - Sincronização bidirecional
 4. ✅ **Scheduler** - Renovação automática
 5. ✅ **Modelos** - CalendarEvent + CalendarSyncState
 6. ✅ **Migração SQL** - Script criado
-7. ✅ **Testes** - 5 testes passando
+7. ✅ **Testes** - 11 testes passando
 8. ✅ **Google Meet** - Links gerados automaticamente
+9. ✅ **Documentação API** - CALENDAR_API.md completo
+10. ✅ **Paginação** - Suporte completo a limit/offset
+11. ✅ **Filtros** - time_min, time_max, status
+12. ✅ **Attendees** - Gerenciamento completo de participantes
 
 ### ⚠️ Itens Parciais (Fase 5 - 60%)
 
@@ -259,7 +297,13 @@ if token != config.WEBHOOK_SECRET:
 
 ## 📖 Como Usar Esta Documentação
 
-### Cenário 1: "Preciso entender rapidamente o que já está pronto"
+### Cenário 1: "Preciso consumir a API no frontend" ⭐ **PRIORIDADE**
+1. Leia **CALENDAR_API.md** (15 min)
+2. Confira os exemplos de código JavaScript
+3. Teste os endpoints com os exemplos fornecidos
+4. Implemente seguindo as melhores práticas
+
+### Cenário 2: "Preciso entender rapidamente o que já está pronto"
 1. Leia **PHASE_0_SUMMARY.md** (5 min)
 2. Veja as tabelas de status
 3. Confira a seção "O que está 100% Pronto"
@@ -293,6 +337,8 @@ if token != config.WEBHOOK_SECRET:
 ## 🔗 Links Úteis
 
 ### Documentos do Projeto
+- [**CALENDAR_API.md**](./CALENDAR_API.md) ⭐ **NOVO** - Documentação completa da API para frontend
+- [CALENDAR_INTEGRATION_STATUS.md](./CALENDAR_INTEGRATION_STATUS.md) - Status técnico da integração
 - [ANALYSIS_REPORT.md](./ANALYSIS_REPORT.md) - Análise original da integração
 - [ACTION_PLAN.md](./ACTION_PLAN.md) - Plano de ação (5 fases)
 - [README.md](./README.md) - README principal do projeto
@@ -311,6 +357,19 @@ if token != config.WEBHOOK_SECRET:
 ---
 
 ## 📝 Histórico de Versões
+
+### Versão 2.0 - 2024-12-08 (API Enhancements) ⭐ **NOVO**
+- ✅ **CALENDAR_API.md criado** - Documentação completa para frontend
+- ✅ **5 endpoints aprimorados** com OpenAPI completo
+- ✅ **GET /api/calendar/events/{id}** - Novo endpoint implementado
+- ✅ **Paginação completa** - limit/offset com validação
+- ✅ **Filtros avançados** - time_min, time_max, status
+- ✅ **Attendees tipados** - Modelo completo de participantes
+- ✅ **11 testes** - 6 novos testes adicionados (100% ✅)
+- ✅ **Validação de parâmetros** - Query params validados com Literal
+- ✅ **Response consistente** - EventResponse em todos endpoints
+- ✅ **Documentação atualizada** - CALENDAR_INTEGRATION_STATUS.md
+- ✅ **Segurança validada** - CodeQL scan 0 vulnerabilidades
 
 ### Versão 1.0 - 2025-12-08 (Fase 0 Completa)
 - ✅ Levantamento completo do código existente

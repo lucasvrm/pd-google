@@ -3,6 +3,8 @@
 **Data:** 2025-12-08  
 **Objetivo:** Documentar o estado atual da integração Google Calendar sem realizar alterações.
 
+> **📚 Para documentação completa da API Calendar/Meet para uso pelo frontend, consulte [CALENDAR_API.md](CALENDAR_API.md)**
+
 ---
 
 ## 1. Resumo Executivo
@@ -151,31 +153,38 @@ class CalendarSyncState(Base):
 
 **Localização:** `/routers/calendar.py`
 
-#### Endpoints Implementados
+#### Endpoints Implementados (Frontend-Ready)
+
+> **📚 Documentação completa:** [CALENDAR_API.md](CALENDAR_API.md)
 
 | Endpoint | Método | Descrição | Status |
 |----------|--------|-----------|--------|
-| `/calendar/events` | POST | Cria evento com Meet | ✅ |
-| `/calendar/events` | GET | Lista eventos do DB local | ✅ |
-| `/calendar/events/{id}` | PATCH | Atualiza evento | ✅ |
-| `/calendar/events/{id}` | DELETE | Cancela evento (soft delete) | ✅ |
-| `/calendar/watch` | POST | Registra webhook manual | ✅ |
+| `/api/calendar/events` | POST | Cria evento com Meet | ✅ Completo |
+| `/api/calendar/events` | GET | Lista eventos com filtros e paginação | ✅ Completo |
+| `/api/calendar/events/{id}` | GET | Detalhes completos de um evento | ✅ **NOVO** |
+| `/api/calendar/events/{id}` | PATCH | Atualiza evento (incluindo attendees) | ✅ Completo |
+| `/api/calendar/events/{id}` | DELETE | Cancela evento (soft delete) | ✅ Completo |
+| `/api/calendar/watch` | POST | Registra webhook (interno) | ✅ Interno |
 
-**Pydantic Models:**
-- ✅ `EventCreate` - Request para criar evento
-- ✅ `EventUpdate` - Request para atualizar evento
-- ✅ `EventResponse` - Response padrão de evento
-- ✅ `Attendee` - Modelo de participante
+**Pydantic Models (Aprimorados):**
+- ✅ `EventCreate` - Request para criar evento com exemplos OpenAPI
+- ✅ `EventUpdate` - Request para atualizar evento (incluindo attendees)
+- ✅ `EventResponse` - Response padrão completo (organizer_email, attendees tipados)
+- ✅ `Attendee` - Modelo completo de participante (email, responseStatus, displayName, etc.)
 
-**Status:** ✅ Totalmente implementado.
+**Status:** ✅ Totalmente implementado e documentado.
 
 **Características Importantes:**
 - ✅ Criação de eventos gera automaticamente link do Meet quando `create_meet_link=true`
 - ✅ Listagem lê do banco de dados local (otimizado para performance)
-- ✅ Filtros por `time_min` e `time_max` implementados
+- ✅ **NOVO:** Filtros por `time_min`, `time_max` e `status` implementados
+- ✅ **NOVO:** Paginação via `limit` e `offset` (até 500 resultados por página)
 - ✅ Eventos cancelados não aparecem na listagem (filtro `status != 'cancelled'`)
 - ✅ Update suporta tanto ID do banco quanto Google Event ID
+- ✅ **NOVO:** Update de attendees completamente funcional
 - ✅ Soft delete implementado (status='cancelled')
+- ✅ **NOVO:** Todas as respostas incluem attendees como lista tipada (não JSON string)
+- ✅ **NOVO:** Documentação OpenAPI completa com summary, description e exemplos
 
 ### 3.4. Webhooks Unificados
 
@@ -312,8 +321,14 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 | `test_update_event` | Atualiza título de evento | ✅ PASSOU |
 | `test_delete_event` | Cancela evento (soft delete) | ✅ PASSOU |
 | `test_watch_calendar` | Registra webhook channel | ✅ PASSOU |
+| `test_get_event_by_id` | Busca evento por ID | ✅ PASSOU |
+| `test_get_event_not_found` | Testa erro 404 para evento inexistente | ✅ PASSOU |
+| `test_list_events_with_pagination` | Testa paginação (limit/offset) | ✅ PASSOU |
+| `test_list_events_with_status_filter` | Testa filtro por status | ✅ PASSOU |
+| `test_update_event_with_attendees` | Testa atualização de attendees | ✅ PASSOU |
+| `test_event_response_includes_all_fields` | Valida todos campos na resposta | ✅ PASSOU |
 
-**Resultado:** ✅ 5/5 testes passando
+**Resultado:** ✅ 11/11 testes passando (6 novos testes adicionados)
 
 **Mock Service:** Implementado para simular Google Calendar API sem dependências externas.
 
@@ -384,15 +399,42 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 
 ## 5. Contrato de API Atual
 
-### 5.1. POST /calendar/events
+> **📚 ATENÇÃO:** Esta seção foi substituída pela documentação completa em [CALENDAR_API.md](CALENDAR_API.md)
+> 
+> O novo documento inclui:
+> - ✅ Todas as endpoints documentadas com exemplos completos
+> - ✅ Modelos de dados detalhados (Attendee, EventResponse, etc.)
+> - ✅ Query parameters e filtros (time_min, time_max, status, limit, offset)
+> - ✅ Exemplos de uso comum (JavaScript)
+> - ✅ Documentação de como obter e usar o meet_link
+> - ✅ Tratamento de erros
+> - ✅ Melhores práticas
+> - ✅ Paginação e sincronização
+
+### Mudanças Principais da API
+
+#### Novos Recursos (2024-12-08)
+1. **GET /api/calendar/events/{id}** - Novo endpoint para buscar evento específico
+2. **Paginação completa** - Parâmetros `limit` e `offset` em GET /api/calendar/events
+3. **Filtro por status** - Parâmetro `status` para incluir eventos cancelled
+4. **Attendees tipados** - Todos os endpoints retornam attendees como array de objetos (não string JSON)
+5. **Update de attendees** - PATCH agora suporta atualização de lista de participantes
+6. **Responses consistentes** - Todos endpoints retornam EventResponse completo
+7. **Documentação OpenAPI** - Summary, description e exemplos em todos endpoints
+8. **Prefixo /api** - Todos endpoints agora em /api/calendar/* para consistência
+
+#### Exemplo Rápido - Criar Evento com Meet
 
 **Request:**
-```json
+```bash
+POST /api/calendar/events
+Content-Type: application/json
+
 {
   "summary": "Reunião de Vendas - Cliente X",
   "description": "Apresentação de proposta...",
-  "start_time": "2023-10-25T14:00:00Z",
-  "end_time": "2023-10-25T15:00:00Z",
+  "start_time": "2024-01-15T14:00:00Z",
+  "end_time": "2024-01-15T15:00:00Z",
   "attendees": ["vendedor@empresa.com", "cliente@gmail.com"],
   "create_meet_link": true
 }
@@ -402,66 +444,63 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 ```json
 {
   "id": 1,
-  "google_event_id": "evt_12345...",
+  "google_event_id": "evt_abc123xyz",
   "summary": "Reunião de Vendas - Cliente X",
   "description": "Apresentação de proposta...",
-  "start_time": "2023-10-25T14:00:00+00:00",
-  "end_time": "2023-10-25T15:00:00+00:00",
+  "start_time": "2024-01-15T14:00:00+00:00",
+  "end_time": "2024-01-15T15:00:00+00:00",
   "meet_link": "https://meet.google.com/abc-defg-hij",
-  "html_link": "https://calendar.google.com/...",
-  "status": "confirmed"
+  "html_link": "https://calendar.google.com/event?eid=abc123",
+  "status": "confirmed",
+  "organizer_email": "organizer@company.com",
+  "attendees": [
+    {
+      "email": "vendedor@empresa.com",
+      "responseStatus": "needsAction",
+      "displayName": null,
+      "organizer": false,
+      "self": false,
+      "optional": false
+    },
+    {
+      "email": "cliente@gmail.com",
+      "responseStatus": "needsAction",
+      "displayName": null,
+      "organizer": false,
+      "self": false,
+      "optional": false
+    }
+  ]
 }
 ```
 
-### 5.2. GET /calendar/events
+**Como Usar o Meet Link:**
+```javascript
+const response = await fetch('/api/calendar/events', { method: 'POST', ... });
+const event = await response.json();
 
-**Query Params:**
-- `time_min` (optional): ISO datetime
-- `time_max` (optional): ISO datetime
+// O meet_link está pronto para usar!
+console.log('Link da reunião:', event.meet_link);
+// Output: https://meet.google.com/abc-defg-hij
 
-**Response (200):**
-```json
-[
-  {
-    "id": 1,
-    "google_event_id": "evt_12345...",
-    "summary": "Reunião...",
-    "start_time": "2023-10-25T14:00:00+00:00",
-    "end_time": "2023-10-25T15:00:00+00:00",
-    "meet_link": "https://meet.google.com/...",
-    "status": "confirmed"
-  }
-]
+// Exibir para o usuário
+window.open(event.meet_link, '_blank');
 ```
 
-### 5.3. PATCH /calendar/events/{id}
+### Endpoints Resumidos
 
-**Request:**
-```json
-{
-  "summary": "Novo Título",
-  "start_time": "2023-10-25T15:00:00Z"
-}
-```
+Para documentação completa, consulte [CALENDAR_API.md](CALENDAR_API.md).
 
-**Response (200):**
-```json
-{
-  "status": "updated",
-  "google_event": { ... }
-}
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| POST | `/api/calendar/events` | Criar evento com Meet |
+| GET | `/api/calendar/events` | Listar eventos (com filtros e paginação) |
+| GET | `/api/calendar/events/{id}` | Detalhes de evento específico |
+| PATCH | `/api/calendar/events/{id}` | Atualizar evento |
+| DELETE | `/api/calendar/events/{id}` | Cancelar evento |
+| POST | `/api/calendar/watch` | Registrar webhook (interno) |
 
-### 5.4. DELETE /calendar/events/{id}
-
-**Response (200):**
-```json
-{
-  "status": "cancelled"
-}
-```
-
-### 5.5. POST /calendar/watch
+### 5.5. POST /api/calendar/watch (Interno)
 
 **Response (201):**
 ```json
