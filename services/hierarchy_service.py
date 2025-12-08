@@ -53,16 +53,16 @@ class HierarchyService:
             print(f"Warning: Could not list files in parent folder {parent_id}: {e}")
         return None
 
-    def _handle_mapping_race_condition(self, entity_type: str, entity_id: str, new_mapping: models.DriveFolder) -> models.DriveFolder:
+    def _handle_mapping_race_condition(self, entity_type: str, entity_id: str, new_mapping: models.DriveFolder) -> tuple[models.DriveFolder, bool]:
         """
         Helper method to handle IntegrityError when saving a mapping.
-        Returns the existing mapping on race condition, or raises if unexpected.
+        Returns a tuple of (mapping, is_new) where is_new indicates if this was newly created.
         """
         try:
             self.db.add(new_mapping)
             self.db.commit()
             self.db.refresh(new_mapping)
-            return new_mapping
+            return (new_mapping, True)
         except IntegrityError:
             # Race condition: another process created the mapping
             print(f"Race condition detected: mapping already exists for {entity_type} {entity_id}")
@@ -73,7 +73,7 @@ class HierarchyService:
                 entity_id=entity_id
             ).first()
             if existing_mapping:
-                return existing_mapping
+                return (existing_mapping, False)
             else:
                 # Unexpected case, re-raise
                 raise
@@ -196,10 +196,10 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        result = self._handle_mapping_race_condition("company", company_id, new_mapping)
+        result, is_new = self._handle_mapping_race_condition("company", company_id, new_mapping)
 
         # 7. Apply Template (only if we just created the mapping)
-        if result == new_mapping:
+        if is_new:
             from services.template_service import TemplateService, run_apply_template_background
 
             if background_tasks:
@@ -265,10 +265,10 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        result = self._handle_mapping_race_condition("deal", deal_id, new_mapping)
+        result, is_new = self._handle_mapping_race_condition("deal", deal_id, new_mapping)
 
         # Apply Template (only if we just created the mapping)
-        if result == new_mapping:
+        if is_new:
             from services.template_service import TemplateService, run_apply_template_background
 
             if background_tasks:
@@ -333,10 +333,10 @@ class HierarchyService:
             folder_url=folder.get("webViewLink")
         )
         
-        result = self._handle_mapping_race_condition("lead", lead_id, new_mapping)
+        result, is_new = self._handle_mapping_race_condition("lead", lead_id, new_mapping)
 
         # Apply Template (only if we just created the mapping)
-        if result == new_mapping:
+        if is_new:
             from services.template_service import TemplateService, run_apply_template_background
 
             if background_tasks:
