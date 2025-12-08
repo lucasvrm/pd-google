@@ -68,25 +68,36 @@ class GoogleDriveRealService:
         If it exists, returns the metadata.
         If not, creates it.
         This ensures idempotency and helps in repairing folder structures.
+        
+        Normalizes folder names to prevent duplicates from whitespace differences.
         """
         self._check_auth()
 
         target_parent = parent_id if parent_id else 'root'
+        # Normalize name by stripping whitespace
+        normalized_name = name.strip()
 
         try:
             # 1. Try to find existing folder
             # list_files already uses cache, so this is efficient
             children = self.list_files(target_parent)
             for file in children:
-                if file.get('name') == name and file.get('mimeType') == 'application/vnd.google-apps.folder':
+                # Compare normalized names to handle whitespace variations
+                if file.get('name', '').strip() == normalized_name and \
+                   file.get('mimeType') == 'application/vnd.google-apps.folder':
                      # Found it!
-                     print(f"Folder '{name}' already exists in {target_parent}. Using ID: {file['id']}")
+                     print(f"Folder '{normalized_name}' already exists in {target_parent}. Using ID: {file['id']}")
                      return file
         except Exception as e:
             print(f"Warning: Failed to list files in get_or_create_folder: {e}. Proceeding to create attempt.")
 
-        # 2. Create if not found
-        return self.create_folder(name, parent_id)
+        # 2. Create if not found (use normalized name)
+        # Note: There's still a small race condition window here in production
+        # where two processes might both not find the folder and both try to create it.
+        # Google Drive API will create both (it allows duplicate names).
+        # The cache invalidation after create_folder helps subsequent calls find it,
+        # but for true prevention we rely on the local caching in template_service.
+        return self.create_folder(normalized_name, parent_id)
 
     def create_folder(self, name: str, parent_id: Optional[str] = None) -> Dict[str, Any]:
         self._check_auth()
