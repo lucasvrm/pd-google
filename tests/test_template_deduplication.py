@@ -171,7 +171,7 @@ class TestDealTemplateDeduplication:
         db_session.add(company)
         deal = models.Deal(
             id="deal-dedup-test",
-            title="Test Deal",  # Maps to client_name column
+            title="Test Deal",  # The 'title' attribute maps to 'client_name' column in the database
             company_id="comp-dedup-test"
         )
         db_session.add(deal)
@@ -241,7 +241,7 @@ class TestDealTemplateDeduplication:
         db_session.add(company)
         deal = models.Deal(
             id="deal-repair-test",
-            title="Repair Deal",  # Maps to client_name column
+            title="Repair Deal",  # The 'title' attribute maps to 'client_name' column in the database
             company_id="comp-repair-test"
         )
         db_session.add(deal)
@@ -322,7 +322,7 @@ class TestLeadTemplateDeduplication:
         db_session.add(company)
         lead = models.Lead(
             id="lead-dedup-test",
-            title="Test Lead",  # Maps to legal_name column
+            title="Test Lead",  # The 'title' attribute maps to 'legal_name' column in the database
             company_id="comp-lead-dedup"
         )
         db_session.add(lead)

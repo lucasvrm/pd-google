@@ -37,7 +37,7 @@ class TemplateService:
                     children = self.drive_service.list_files(parent_id)
                     # Normalize names for comparison (trim whitespace)
                     parent_children_cache[parent_id] = {
-                        child['name'].strip(): child 
+                        child.get('name', '').strip(): child 
                         for child in children 
                         if child.get('mimeType') == 'application/vnd.google-apps.folder'
                     }
