@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import drive, webhooks, calendar, drive_items_adapter
+from routers import drive, webhooks, calendar, drive_items_adapter, gmail
 from database import engine
 import models
 from services.scheduler_service import scheduler_service
@@ -63,6 +63,7 @@ app.include_router(drive.router, prefix="/api")
 app.include_router(webhooks.router)
 app.include_router(calendar.router, prefix="/api/calendar")
 app.include_router(drive_items_adapter.router, prefix="/api/drive")
+app.include_router(gmail.router, prefix="/api/gmail")
 
 @app.get("/")
 def read_root():
