@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from services.google_auth import GoogleAuthService
 import base64
 import re
@@ -189,7 +189,7 @@ class GoogleGmailService:
                 header_dict[name] = value
         return header_dict
     
-    def _get_message_body(self, payload: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    def _get_message_body(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
         """
         Extract plain text and HTML body from message payload.
         

@@ -5,7 +5,7 @@ Tests for Gmail API endpoints
 import pytest
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from fastapi.testclient import TestClient
 
 # Mock Gmail Service
@@ -165,7 +165,7 @@ class MockGmailService:
                 result[name] = value
         return result
     
-    def _get_message_body(self, payload: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    def _get_message_body(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
         """Get message body helper"""
         import base64
         plain_text = None
