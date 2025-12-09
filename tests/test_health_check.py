@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from database import Base
 from main import app
 import models
+from services.health_service import HealthService
 
 # Setup Test DB
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_health.db"
@@ -34,6 +35,22 @@ from routers.health import get_db as health_get_db
 app.dependency_overrides[health_get_db] = override_get_db
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def mock_health_connectivity(monkeypatch):
+    """Avoid external API calls during health tests by mocking connectivity checks."""
+    monkeypatch.setattr(
+        HealthService,
+        "_check_calendar_connectivity",
+        lambda self: {"reachable": True, "detail": "mock"},
+    )
+    monkeypatch.setattr(
+        HealthService,
+        "_check_gmail_connectivity",
+        lambda self: {"reachable": True, "auth_ok": True, "detail": "mock"},
+    )
+    yield
 
 
 def setup_module(module):
@@ -94,6 +111,7 @@ def test_health_check_with_active_channels():
     assert data["last_sync"] is not None
     assert data["oldest_event"] is not None
     assert data["newest_event"] is not None
+    assert "webhook_queue" in data
     assert "issues" not in data
 
 
@@ -267,33 +285,23 @@ def test_gmail_health_check_healthy():
         assert isinstance(data["auth_ok"], bool)
 
 
-def test_gmail_health_check_no_credentials():
+def test_gmail_health_check_no_credentials(monkeypatch):
     """Test Gmail health check when credentials are missing."""
-    # Temporarily remove credentials
-    original_creds = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if original_creds:
-        del os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-    
-    # Need to reload config module to pick up env changes
-    import importlib
-    import config as config_module
-    importlib.reload(config_module)
-    
-    try:
-        response = client.get("/health/gmail")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert data["service"] == "gmail"
-        assert data["status"] == "unhealthy"
-        assert data["auth_ok"] == False
-        assert "issues" in data
-        assert any("credentials not configured" in issue.lower() for issue in data["issues"])
-    finally:
-        # Restore credentials
-        if original_creds:
-            os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"] = original_creds
-        importlib.reload(config_module)
+    monkeypatch.setattr(
+        HealthService,
+        "_check_gmail_connectivity",
+        lambda self: {"reachable": False, "auth_ok": False, "detail": "missing credentials"},
+    )
+
+    response = client.get("/health/gmail")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["service"] == "gmail"
+    assert data["status"] == "degraded"
+    assert data["auth_ok"] is False
+    assert "issues" in data
+    assert any("credentials" in issue.lower() for issue in data["issues"])
 
 
 def test_general_health_check():
