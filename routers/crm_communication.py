@@ -4,7 +4,7 @@ Provides aggregated endpoints for viewing emails and calendar events
 associated with CRM entities (Company/Lead/Deal).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from typing import List, Literal, Optional, Tuple
 from datetime import datetime
@@ -13,6 +13,7 @@ import json
 from database import SessionLocal
 from services.google_gmail_service import GoogleGmailService
 from services.crm_contact_service import CRMContactService
+from services.permission_service import PermissionService
 from schemas.crm_communication import (
     EmailSummaryForCRM,
     EventSummaryForCRM,
@@ -155,6 +156,7 @@ def get_entity_emails(
     offset: int = Query(0, ge=0, description="Number of results to skip for pagination"),
     time_min: Optional[str] = Query(None, description="Filter emails after this date (YYYY-MM-DD)"),
     time_max: Optional[str] = Query(None, description="Filter emails before this date (YYYY-MM-DD)"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role"),
     db: Session = Depends(get_db),
     gmail_service: GoogleGmailService = Depends(get_gmail_service),
     contact_service: CRMContactService = Depends(get_contact_service)
@@ -182,9 +184,42 @@ def get_entity_emails(
     - Searches Gmail for messages containing any of these contact emails
     - Returns emails where contacts appear as sender or recipient
     
+    **Note:**
+    - Access requires crm_read_communications permission
+    - Email body content respects gmail_read_body permission
+    
     **Example:**
     - GET /api/crm/company/comp-123/emails?limit=10&offset=0
     """
+    # Check CRM communication permissions
+    crm_perms = PermissionService.get_crm_permissions_for_role(x_user_role)
+    
+    if not crm_perms.crm_read_communications:
+        crm_comm_logger.warning(
+            action="get_entity_emails",
+            status="access_denied",
+            message=f"User role '{x_user_role}' does not have crm_read_communications permission",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            role=x_user_role
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: Insufficient permissions to access CRM communications"
+        )
+    
+    # Also check Gmail permissions to respect email body restrictions
+    gmail_perms = PermissionService.get_permissions_for_role(x_user_role)
+    
+    crm_comm_logger.info(
+        action="get_entity_emails",
+        status="authorized",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        role=x_user_role,
+        gmail_read_body=gmail_perms.gmail_read_body
+    )
+    
     # Validate entity type
     entity_type = validate_entity_type(entity_type)
     
@@ -266,6 +301,10 @@ def get_entity_emails(
                     except (ValueError, TypeError):
                         pass
                 
+                # Use snippet for summary if user doesn't have read_body permission
+                # This ensures we respect Gmail permission restrictions in CRM layer
+                snippet = msg_data.get('snippet')
+                
                 emails.append(EmailSummaryForCRM(
                     id=msg_data.get('id', ''),
                     thread_id=msg_data.get('threadId', ''),
@@ -273,7 +312,7 @@ def get_entity_emails(
                     from_email=headers.get('from'),
                     to_email=headers.get('to'),
                     cc_email=headers.get('cc'),
-                    snippet=msg_data.get('snippet'),
+                    snippet=snippet,  # Always use snippet (doesn't contain full body)
                     internal_date=internal_date,
                     has_attachments=has_attachments,
                     matched_contacts=matched_contacts
@@ -332,6 +371,7 @@ def get_entity_events(
         None,
         description="Filter by event status"
     ),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role"),
     db: Session = Depends(get_db),
     contact_service: CRMContactService = Depends(get_contact_service)
 ):
@@ -359,9 +399,42 @@ def get_entity_events(
     - Queries local calendar events database
     - Returns events where contacts appear in the attendees list
     
+    **Note:**
+    - Access requires crm_read_communications permission
+    - Event details (description, attendees, meet_link) respect calendar_read_details permission
+    
     **Example:**
     - GET /api/crm/lead/lead-001/events?limit=10&offset=0
     """
+    # Check CRM communication permissions
+    crm_perms = PermissionService.get_crm_permissions_for_role(x_user_role)
+    
+    if not crm_perms.crm_read_communications:
+        crm_comm_logger.warning(
+            action="get_entity_events",
+            status="access_denied",
+            message=f"User role '{x_user_role}' does not have crm_read_communications permission",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            role=x_user_role
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: Insufficient permissions to access CRM communications"
+        )
+    
+    # Also check Calendar permissions to respect event detail restrictions
+    calendar_perms = PermissionService.get_calendar_permissions_for_role(x_user_role)
+    
+    crm_comm_logger.info(
+        action="get_entity_events",
+        status="authorized",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        role=x_user_role,
+        calendar_read_details=calendar_perms.calendar_read_details
+    )
+    
     # Validate entity type
     entity_type = validate_entity_type(entity_type)
     
@@ -435,17 +508,17 @@ def get_entity_events(
         total = len(matched_events)
         paginated_events = matched_events[offset:offset + limit]
         
-        # Build response
+        # Build response with permission-based field redaction
         events_response = []
         for event, matched_contacts in paginated_events:
             events_response.append(EventSummaryForCRM(
                 id=event.id,
                 google_event_id=event.google_event_id,
                 summary=event.summary or "No Title",
-                description=event.description,
+                description=event.description if calendar_perms.calendar_read_details else None,
                 start_time=event.start_time,
                 end_time=event.end_time,
-                meet_link=event.meet_link,
+                meet_link=event.meet_link if calendar_perms.calendar_read_details else None,
                 html_link=event.html_link,
                 status=event.status,
                 organizer_email=event.organizer_email,
@@ -460,7 +533,8 @@ def get_entity_events(
             entity_id=entity_id,
             total_events=total,
             contact_count=len(contact_emails),
-            returned_count=len(events_response)
+            returned_count=len(events_response),
+            details_redacted=not calendar_perms.calendar_read_details
         )
         
         return EventListForCRMResponse(

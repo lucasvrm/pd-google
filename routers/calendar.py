@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, Header
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
 from pydantic import BaseModel
@@ -7,6 +7,7 @@ import json
 
 from database import SessionLocal
 from services.google_calendar_service import GoogleCalendarService
+from services.permission_service import PermissionService
 from utils.structured_logging import calendar_logger
 import models
 from config import config
@@ -137,6 +138,30 @@ class EventResponse(BaseModel):
         }
 
 # Helper functions
+def redact_calendar_event_details(event_response: EventResponse, has_details_permission: bool) -> EventResponse:
+    """
+    Redact sensitive calendar event fields based on permissions.
+    
+    If user doesn't have calendar_read_details permission, the following fields are redacted:
+    - description: Set to None
+    - attendees: Set to empty list
+    - meet_link: Set to None
+    
+    Args:
+        event_response: The event response to potentially redact
+        has_details_permission: Whether user has permission to read event details
+        
+    Returns:
+        EventResponse with potentially redacted fields
+    """
+    if not has_details_permission:
+        event_response.description = None
+        event_response.attendees = []
+        event_response.meet_link = None
+    
+    return event_response
+
+
 def parse_attendees_from_google(attendees_data: Optional[List[dict]]) -> List[Attendee]:
     """
     Parse attendees from Google Calendar API format to Pydantic models.
@@ -275,6 +300,7 @@ def list_events(
     ),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role"),
     db: Session = Depends(get_db)
 ):
     """
@@ -293,7 +319,18 @@ def list_events(
     **Note:** 
     - By default, cancelled events are excluded unless explicitly requested via status filter
     - Events are synced from Google Calendar via webhooks
+    - Access to event details (description, attendees, meet_link) depends on user role
     """
+    # Get calendar permissions for the user's role
+    calendar_perms = PermissionService.get_calendar_permissions_for_role(x_user_role)
+    
+    calendar_logger.info(
+        action="list_events",
+        status="checking_permissions",
+        role=x_user_role,
+        calendar_read_details=calendar_perms.calendar_read_details
+    )
+    
     # Build query
     query = db.query(models.CalendarEvent)
     
@@ -316,26 +353,36 @@ def list_events(
     for event in events:
         # Parse attendees from JSON string
         attendees_list = []
-        if event.attendees:
+        if event.attendees and calendar_perms.calendar_read_details:
             try:
                 attendees_data = json.loads(event.attendees)
                 attendees_list = parse_attendees_from_google(attendees_data)
             except (json.JSONDecodeError, TypeError):
                 attendees_list = []
         
-        response_list.append(EventResponse(
+        event_response = EventResponse(
             id=event.id,
             google_event_id=event.google_event_id,
             summary=event.summary or "No Title",
-            description=event.description,
+            description=event.description if calendar_perms.calendar_read_details else None,
             start_time=event.start_time,
             end_time=event.end_time,
-            meet_link=event.meet_link,
+            meet_link=event.meet_link if calendar_perms.calendar_read_details else None,
             html_link=event.html_link,
             status=event.status,
             organizer_email=event.organizer_email,
             attendees=attendees_list
-        ))
+        )
+        
+        response_list.append(event_response)
+
+    calendar_logger.info(
+        action="list_events",
+        status="success",
+        role=x_user_role,
+        event_count=len(response_list),
+        details_redacted=not calendar_perms.calendar_read_details
+    )
 
     return response_list
 
@@ -344,6 +391,7 @@ def list_events(
             description="Retrieves detailed information about a specific calendar event by its ID.")
 def get_event(
     event_id: str,
+    x_user_role: Optional[str] = Header(None, alias="x-user-role"),
     db: Session = Depends(get_db)
 ):
     """
@@ -354,19 +402,31 @@ def get_event(
     
     **Returns:**
     - Complete event details including:
-      - meet_link: Google Meet video conference link (if available)
+      - meet_link: Google Meet video conference link (if available and user has permissions)
       - html_link: Link to view event in Google Calendar
       - summary: Event title
-      - description: Event details
+      - description: Event details (if user has permissions)
       - start_time & end_time: Event datetime with timezone
       - status: Event status (confirmed, tentative, cancelled)
       - organizer_email: Email of the event organizer
-      - attendees: List of all invited participants with their response status
+      - attendees: List of all invited participants with their response status (if user has permissions)
     
     **Note:**
     - The meet_link field contains the Google Meet link when create_meet_link was true during creation
     - Cancelled events can still be retrieved via this endpoint
+    - Access to event details depends on user role (description, attendees, meet_link)
     """
+    # Get calendar permissions for the user's role
+    calendar_perms = PermissionService.get_calendar_permissions_for_role(x_user_role)
+    
+    calendar_logger.info(
+        action="get_event",
+        status="checking_permissions",
+        event_id=event_id,
+        role=x_user_role,
+        calendar_read_details=calendar_perms.calendar_read_details
+    )
+    
     # Try to find by internal ID first, then by Google event ID
     db_event = None
     if event_id.isdigit():
@@ -377,30 +437,46 @@ def get_event(
         db_event = db.query(models.CalendarEvent).filter(models.CalendarEvent.google_event_id == event_id).first()
     
     if not db_event:
+        calendar_logger.warning(
+            action="get_event",
+            status="not_found",
+            event_id=event_id,
+            role=x_user_role
+        )
         raise HTTPException(status_code=404, detail="Event not found")
     
     # Parse attendees from JSON string
     attendees_list = []
-    if db_event.attendees:
+    if db_event.attendees and calendar_perms.calendar_read_details:
         try:
             attendees_data = json.loads(db_event.attendees)
             attendees_list = parse_attendees_from_google(attendees_data)
         except (json.JSONDecodeError, TypeError):
             attendees_list = []
     
-    return EventResponse(
+    event_response = EventResponse(
         id=db_event.id,
         google_event_id=db_event.google_event_id,
         summary=db_event.summary or "No Title",
-        description=db_event.description,
+        description=db_event.description if calendar_perms.calendar_read_details else None,
         start_time=db_event.start_time,
         end_time=db_event.end_time,
-        meet_link=db_event.meet_link,
+        meet_link=db_event.meet_link if calendar_perms.calendar_read_details else None,
         html_link=db_event.html_link,
         status=db_event.status,
         organizer_email=db_event.organizer_email,
         attendees=attendees_list
     )
+    
+    calendar_logger.info(
+        action="get_event",
+        status="success",
+        event_id=event_id,
+        role=x_user_role,
+        details_redacted=not calendar_perms.calendar_read_details
+    )
+    
+    return event_response
 
 @router.patch("/events/{event_id}", response_model=EventResponse,
               summary="Update Calendar Event",

@@ -23,6 +23,18 @@ class GmailPermissions:
         self.gmail_read_body = gmail_read_body
 
 
+class CalendarPermissions:
+    """Structure to hold Calendar permissions for a role"""
+    def __init__(self, calendar_read_details: bool = False):
+        self.calendar_read_details = calendar_read_details
+
+
+class CRMPermissions:
+    """Structure to hold CRM communication permissions for a role"""
+    def __init__(self, crm_read_communications: bool = False):
+        self.crm_read_communications = crm_read_communications
+
+
 class PermissionService:
     def __init__(self, db: Session):
         self.db = db
@@ -117,3 +129,87 @@ class PermissionService:
         
         # Unknown role - apply least privilege (metadata only)
         return GmailPermissions(gmail_read_metadata=True, gmail_read_body=False)
+
+    # ------------------------------------------------------------
+    # Calendar Permissions - role-based access control
+    # ------------------------------------------------------------
+    @staticmethod
+    def get_calendar_permissions_for_role(role: Optional[str]) -> CalendarPermissions:
+        """
+        Get Calendar permissions based on user role.
+        
+        Permission matrix:
+        - admin/superadmin: Full access (can see description, attendees, meet_link)
+        - manager/analyst: Full access (can see description, attendees, meet_link)
+        - new_business: Full access (can see description, attendees, meet_link)
+        - client/customer: Limited access (cannot see description, attendees, meet_link)
+        - default/unknown: Limited access (cannot see description, attendees, meet_link)
+        
+        Args:
+            role: User role from x-user-role header
+            
+        Returns:
+            CalendarPermissions object with permission flags
+        """
+        if not role:
+            # No role provided - apply least privilege
+            return CalendarPermissions(calendar_read_details=False)
+        
+        role_normalized = role.strip().lower()
+        
+        # Admin and superadmin have full access
+        if role_normalized in ("admin", "superadmin", "super_admin"):
+            return CalendarPermissions(calendar_read_details=True)
+        
+        # Manager, analyst, and new_business have full access
+        if role_normalized in ("manager", "analyst", "new_business", "newbusiness"):
+            return CalendarPermissions(calendar_read_details=True)
+        
+        # Client and customer have restricted access (no details)
+        if role_normalized in ("client", "customer"):
+            return CalendarPermissions(calendar_read_details=False)
+        
+        # Unknown role - apply least privilege (no details)
+        return CalendarPermissions(calendar_read_details=False)
+
+    # ------------------------------------------------------------
+    # CRM Communication Permissions - role-based access control
+    # ------------------------------------------------------------
+    @staticmethod
+    def get_crm_permissions_for_role(role: Optional[str]) -> CRMPermissions:
+        """
+        Get CRM communication permissions based on user role.
+        
+        Permission matrix:
+        - admin/superadmin: Full access (can access CRM emails and events)
+        - manager/analyst: Full access (can access CRM emails and events)
+        - new_business: Full access (can access CRM emails and events)
+        - client/customer: No access (403 on CRM communication endpoints)
+        - default/unknown: No access (403 on CRM communication endpoints)
+        
+        Args:
+            role: User role from x-user-role header
+            
+        Returns:
+            CRMPermissions object with permission flags
+        """
+        if not role:
+            # No role provided - apply least privilege
+            return CRMPermissions(crm_read_communications=False)
+        
+        role_normalized = role.strip().lower()
+        
+        # Admin and superadmin have full access
+        if role_normalized in ("admin", "superadmin", "super_admin"):
+            return CRMPermissions(crm_read_communications=True)
+        
+        # Manager, analyst, and new_business have full access
+        if role_normalized in ("manager", "analyst", "new_business", "newbusiness"):
+            return CRMPermissions(crm_read_communications=True)
+        
+        # Client and customer have no access to CRM communications
+        if role_normalized in ("client", "customer"):
+            return CRMPermissions(crm_read_communications=False)
+        
+        # Unknown role - apply least privilege (no access)
+        return CRMPermissions(crm_read_communications=False)
