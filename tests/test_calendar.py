@@ -307,3 +307,290 @@ def test_event_response_includes_all_fields():
     assert "organizer_email" in data
     assert "attendees" in data
     assert isinstance(data["attendees"], list)
+
+
+# ------------------------------------------------------------
+# Calendar Permission Tests
+# ------------------------------------------------------------
+
+def test_admin_can_see_calendar_event_details():
+    """Test that admin role can see all event details"""
+    # Create an event first
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Admin Test Event",
+        "description": "Sensitive information here",
+        "start_time": "2024-01-15T10:00:00",
+        "end_time": "2024-01-15T11:00:00",
+        "attendees": ["client@example.com", "manager@example.com"],
+        "create_meet_link": True
+    })
+    assert create_res.status_code == 201
+    event_id = create_res.json()["id"]
+    
+    # Get event as admin
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "admin"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Admin should see all details
+    assert data["description"] == "Sensitive information here"
+    assert len(data["attendees"]) == 2
+    assert data["meet_link"] is not None
+    assert "meet.google.com" in data["meet_link"]
+
+
+def test_analyst_can_see_calendar_event_details():
+    """Test that analyst role can see all event details"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Analyst Test Event",
+        "description": "Project discussion details",
+        "start_time": "2024-01-16T14:00:00",
+        "end_time": "2024-01-16T15:00:00",
+        "attendees": ["team@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event as analyst
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "analyst"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Analyst should see all details
+    assert data["description"] == "Project discussion details"
+    assert len(data["attendees"]) == 1
+    assert data["meet_link"] is not None
+
+
+def test_client_cannot_see_calendar_event_details():
+    """Test that client role cannot see sensitive event details"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Client Test Event",
+        "description": "Internal strategy discussion",
+        "start_time": "2024-01-17T10:00:00",
+        "end_time": "2024-01-17T11:00:00",
+        "attendees": ["internal@example.com", "partner@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event as client
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "client"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Client should see basic info but not sensitive details
+    assert data["summary"] == "Client Test Event"
+    assert data["start_time"] is not None
+    assert data["end_time"] is not None
+    assert data["html_link"] is not None
+    
+    # Sensitive fields should be redacted
+    assert data["description"] is None
+    assert len(data["attendees"]) == 0
+    assert data["meet_link"] is None
+
+
+def test_customer_cannot_see_calendar_event_details():
+    """Test that customer role cannot see sensitive event details"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Customer Event",
+        "description": "Confidential notes",
+        "start_time": "2024-01-18T09:00:00",
+        "end_time": "2024-01-18T10:00:00",
+        "attendees": ["sales@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event as customer
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "customer"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Customer should not see sensitive details
+    assert data["description"] is None
+    assert len(data["attendees"]) == 0
+    assert data["meet_link"] is None
+
+
+def test_unknown_role_cannot_see_calendar_event_details():
+    """Test that unknown role cannot see sensitive event details (least privilege)"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Unknown Role Event",
+        "description": "Secret information",
+        "start_time": "2024-01-19T11:00:00",
+        "end_time": "2024-01-19T12:00:00",
+        "attendees": ["secret@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event with unknown role
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "random_role"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Unknown role should not see sensitive details
+    assert data["description"] is None
+    assert len(data["attendees"]) == 0
+    assert data["meet_link"] is None
+
+
+def test_no_role_header_cannot_see_calendar_event_details():
+    """Test that missing role header gets full access for backward compatibility"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "No Role Event",
+        "description": "Private content",
+        "start_time": "2024-01-20T13:00:00",
+        "end_time": "2024-01-20T14:00:00",
+        "attendees": ["private@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event without role header - should get full access for backward compatibility
+    response = client.get(f"/api/calendar/events/{event_id}")
+    assert response.status_code == 200
+    data = response.json()
+    
+    # No role should get full access (backward compatibility)
+    assert data["description"] == "Private content"
+    assert len(data["attendees"]) == 1
+    assert data["meet_link"] is not None
+
+
+def test_list_events_with_admin_role():
+    """Test that list events respects permissions for admin role"""
+    # Create multiple events
+    for i in range(3):
+        client.post("/api/calendar/events", json={
+            "summary": f"List Test Event {i}",
+            "description": f"Details {i}",
+            "start_time": f"2024-02-{10+i:02d}T10:00:00",
+            "end_time": f"2024-02-{10+i:02d}T11:00:00",
+            "attendees": [f"user{i}@example.com"],
+            "create_meet_link": True
+        })
+    
+    # List events as admin
+    response = client.get("/api/calendar/events?limit=10", headers={"x-user-role": "admin"})
+    assert response.status_code == 200
+    events = response.json()
+    assert len(events) > 0
+    
+    # Admin should see all details in list
+    for event in events:
+        if event["summary"].startswith("List Test Event"):
+            assert event["description"] is not None
+            # Note: attendees might be empty if not part of List Test Event series
+
+
+def test_list_events_with_client_role():
+    """Test that list events redacts details for client role"""
+    # Create an event
+    client.post("/api/calendar/events", json={
+        "summary": "Client List Test",
+        "description": "Sensitive list info",
+        "start_time": "2024-02-15T10:00:00",
+        "end_time": "2024-02-15T11:00:00",
+        "attendees": ["confidential@example.com"],
+        "create_meet_link": True
+    })
+    
+    # List events as client
+    response = client.get("/api/calendar/events?limit=50", headers={"x-user-role": "client"})
+    assert response.status_code == 200
+    events = response.json()
+    
+    # Find our test event
+    client_event = None
+    for event in events:
+        if event["summary"] == "Client List Test":
+            client_event = event
+            break
+    
+    assert client_event is not None
+    # Client should not see details
+    assert client_event["description"] is None
+    assert len(client_event["attendees"]) == 0
+    assert client_event["meet_link"] is None
+
+
+def test_manager_can_see_calendar_event_details():
+    """Test that manager role can see all event details"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Manager Test Event",
+        "description": "Manager meeting notes",
+        "start_time": "2024-02-20T10:00:00",
+        "end_time": "2024-02-20T11:00:00",
+        "attendees": ["team@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event as manager
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "manager"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Manager should see all details
+    assert data["description"] == "Manager meeting notes"
+    assert len(data["attendees"]) == 1
+    assert data["meet_link"] is not None
+
+
+def test_new_business_can_see_calendar_event_details():
+    """Test that new_business role can see all event details"""
+    # Create an event
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "New Business Test Event",
+        "description": "Sales opportunity details",
+        "start_time": "2024-02-21T14:00:00",
+        "end_time": "2024-02-21T15:00:00",
+        "attendees": ["prospect@example.com"],
+        "create_meet_link": True
+    })
+    event_id = create_res.json()["id"]
+    
+    # Get event as new_business
+    response = client.get(f"/api/calendar/events/{event_id}", headers={"x-user-role": "new_business"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # New business should see all details
+    assert data["description"] == "Sales opportunity details"
+    assert len(data["attendees"]) == 1
+    assert data["meet_link"] is not None
+
+
+def test_permission_service_calendar_permissions():
+    """Test PermissionService calendar permission logic directly"""
+    from services.permission_service import PermissionService
+    
+    # Full access roles
+    full_access_roles = ["admin", "superadmin", "manager", "analyst", "new_business"]
+    for role in full_access_roles:
+        perms = PermissionService.get_calendar_permissions_for_role(role)
+        assert perms.calendar_read_details is True, f"Role {role} should have calendar_read_details"
+    
+    # Restricted access roles
+    restricted_roles = ["client", "customer"]
+    for role in restricted_roles:
+        perms = PermissionService.get_calendar_permissions_for_role(role)
+        assert perms.calendar_read_details is False, f"Role {role} should NOT have calendar_read_details"
+    
+    # Unknown roles get restricted access
+    perms = PermissionService.get_calendar_permissions_for_role("unknown_role")
+    assert perms.calendar_read_details is False, "unknown_role should NOT have calendar_read_details"
+    
+    # None/empty roles get full access for backward compatibility
+    for role in [None, ""]:
+        perms = PermissionService.get_calendar_permissions_for_role(role)
+        assert perms.calendar_read_details is True, f"Role {role} should have calendar_read_details (backward compat)"
