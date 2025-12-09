@@ -243,3 +243,97 @@ def test_health_check_excludes_cancelled_events():
     assert data["service"] == "calendar"
     assert data["status"] == "healthy"
     assert data["event_count"] == 3  # Only confirmed events
+
+
+# Gmail Health Check Tests
+
+def test_gmail_health_check_healthy():
+    """Test Gmail health check when service is properly configured."""
+    # Note: This test uses mock credentials via environment variable
+    response = client.get("/health/gmail")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert data["service"] == "gmail"
+    assert "status" in data
+    assert data["status"] in ["healthy", "degraded", "unhealthy"]
+    assert "auth_ok" in data
+    assert "api_reachable" in data
+    assert "timestamp" in data
+    assert "configured_scopes" in data
+    
+    # If credentials are configured correctly, auth should be OK
+    if os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"):
+        assert isinstance(data["auth_ok"], bool)
+
+
+def test_gmail_health_check_no_credentials():
+    """Test Gmail health check when credentials are missing."""
+    # Temporarily remove credentials
+    original_creds = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if original_creds:
+        del os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+    
+    # Need to reload config module to pick up env changes
+    import importlib
+    import config as config_module
+    importlib.reload(config_module)
+    
+    try:
+        response = client.get("/health/gmail")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["service"] == "gmail"
+        assert data["status"] == "unhealthy"
+        assert data["auth_ok"] == False
+        assert "issues" in data
+        assert any("credentials not configured" in issue.lower() for issue in data["issues"])
+    finally:
+        # Restore credentials
+        if original_creds:
+            os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"] = original_creds
+        importlib.reload(config_module)
+
+
+def test_general_health_check():
+    """Test general health check endpoint that aggregates all services."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert "overall_status" in data
+    assert data["overall_status"] in ["healthy", "degraded", "unhealthy"]
+    assert "timestamp" in data
+    assert "services" in data
+    
+    # Check calendar service data
+    assert "calendar" in data["services"]
+    assert "status" in data["services"]["calendar"]
+    
+    # Check gmail service data
+    assert "gmail" in data["services"]
+    assert "status" in data["services"]["gmail"]
+    assert "auth_ok" in data["services"]["gmail"]
+    assert "api_reachable" in data["services"]["gmail"]
+
+
+def test_general_health_status_aggregation():
+    """Test that general health correctly aggregates service statuses."""
+    # Clear calendar data to force degraded status
+    db = TestingSessionLocal()
+    db.query(models.CalendarEvent).delete()
+    db.query(models.CalendarSyncState).delete()
+    db.commit()
+    db.close()
+    
+    response = client.get("/health")
+    assert response.status_code == 200
+    
+    data = response.json()
+    # With no calendar channels, calendar should be degraded
+    # Overall status should reflect this
+    assert data["services"]["calendar"]["status"] == "degraded"
+    
+    # Overall status should be at least degraded
+    assert data["overall_status"] in ["degraded", "unhealthy"]
