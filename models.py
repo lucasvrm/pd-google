@@ -97,16 +97,80 @@ class Company(Base):
     id = Column(String, primary_key=True) # UUID
     name = Column(String) # Razão Social or Name
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    email = Column(String, nullable=True)
+
+
+class Contact(Base):
+    __tablename__ = "contacts"
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+
+
 class Lead(Base):
     __tablename__ = "leads"
 
-    id = Column(String, primary_key=True) # UUID
+    id = Column(String, primary_key=True)  # UUID
     # Map 'title' attribute to 'legal_name' column
     title = Column("legal_name", String)
+    trade_name = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+    origin = Column(String, nullable=True)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=True)
+    primary_contact_id = Column(String, ForeignKey("contacts.id"), nullable=True)
     qualified_company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationship (optional, but helpful)
+
+
+
+    # Relationships
     company = relationship("Company")
+    owner = relationship("User", foreign_keys=[owner_id])
+    primary_contact = relationship("Contact", foreign_keys=[primary_contact_id])
+    activity_stats = relationship("LeadActivityStats", back_populates="lead", uselist=False)
+    tags = relationship("Tag", secondary="lead_tags", back_populates="leads")
+
+    @property
+    def legal_name(self):
+        return self.title
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)
+    color = Column(String, nullable=True)
+
+    leads = relationship("Lead", secondary="lead_tags", back_populates="tags")
+
+
+class LeadTag(Base):
+    __tablename__ = "lead_tags"
+
+    lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tags.id"), primary_key=True)
+
+
+class LeadActivityStats(Base):
+    __tablename__ = "lead_activity_stats"
+
+    lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
+    engagement_score = Column(Integer, default=0)
+    last_interaction_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    lead = relationship("Lead", back_populates="activity_stats")
 
 class Deal(Base):
     __tablename__ = "master_deals"
