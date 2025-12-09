@@ -36,6 +36,9 @@ router = APIRouter(
     tags=["crm-communication"]
 )
 
+# Configuration constants
+MAX_GMAIL_FETCH_FOR_TIMELINE = 500  # Maximum emails to fetch for timeline endpoint
+
 
 # Dependencies
 def get_db():
@@ -673,10 +676,9 @@ def get_entity_timeline(
             gmail_query += f" before:{time_max}"
         
         # Fetch emails from Gmail (fetch extra to account for filtering)
-        max_fetch = 500
         result = gmail_service.list_messages(
             query=gmail_query,
-            max_results=max_fetch
+            max_results=MAX_GMAIL_FETCH_FOR_TIMELINE
         )
         
         for msg_ref in result.get('messages', []):
@@ -698,6 +700,7 @@ def get_entity_timeline(
             
             if matches_found:
                 # Parse internal date
+                # Note: Using naive datetime to match calendar events from database
                 internal_date = None
                 if 'internalDate' in msg_data:
                     try:
