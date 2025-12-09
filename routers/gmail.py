@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from typing import Optional, List
 from datetime import datetime
 
+from services.gmail_service import GmailService
 from services.google_gmail_service import GoogleGmailService
 from services.permission_service import PermissionService
 from utils.structured_logging import StructuredLogger
@@ -21,6 +22,14 @@ from schemas.gmail import (
     LabelListResponse,
     Attachment
 )
+from schemas.gmail_send import (
+    DraftRequest,
+    DraftResponse,
+    LabelUpdateRequest,
+    LabelUpdateResponse,
+    SendEmailRequest,
+    SentMessage
+)
 
 # Create Gmail-specific structured logger
 gmail_logger = StructuredLogger(service="gmail", logger_name="pipedesk_drive.gmail")
@@ -33,6 +42,11 @@ router = APIRouter(
 def get_gmail_service():
     """Dependency to get Gmail service instance."""
     return GoogleGmailService()
+
+
+def get_gmail_send_service():
+    """Dependency to get Gmail service instance for write operations."""
+    return GmailService()
 
 
 # Helper functions to transform Gmail API responses to our schemas
@@ -628,3 +642,248 @@ def list_labels(
             error=e
         )
         raise HTTPException(status_code=500, detail=f"Failed to list labels: {str(e)}")
+
+
+@router.post(
+    "/send",
+    response_model=SentMessage,
+    summary="Send Gmail Message",
+    description="Sends an email message with optional HTML body, attachments, and thread association."
+)
+def send_message(
+    request: SendEmailRequest,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="send_message",
+            status="forbidden",
+            message="Access denied: User does not have permission to send Gmail messages",
+            role=x_user_role or "none"
+        )
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to send Gmail messages")
+
+    try:
+        result = gmail_service.send_email(
+            to=request.to,
+            cc=request.cc,
+            bcc=request.bcc,
+            subject=request.subject,
+            body_text=request.body_text,
+            body_html=request.body_html,
+            attachments=[att.dict() for att in request.attachments or []],
+            thread_id=request.thread_id,
+        )
+
+        gmail_logger.info(
+            action="send_message",
+            status="success",
+            message="Message sent successfully",
+            message_id=result.get("id"),
+            thread_id=result.get("threadId")
+        )
+
+        return SentMessage(
+            id=result.get("id", ""),
+            thread_id=result.get("threadId"),
+            label_ids=result.get("labelIds")
+        )
+    except Exception as e:
+        gmail_logger.error(
+            action="send_message",
+            message="Failed to send message",
+            error=e
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
+
+
+@router.post(
+    "/drafts",
+    response_model=DraftResponse,
+    summary="Create Gmail Draft",
+    description="Creates a Gmail draft with the provided content and optional attachments."
+)
+def create_draft(
+    request: DraftRequest,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="create_draft",
+            status="forbidden",
+            message="Access denied: User does not have permission to manage drafts",
+            role=x_user_role or "none"
+        )
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to create drafts")
+
+    try:
+        result = gmail_service.create_draft(
+            to=request.to,
+            cc=request.cc,
+            bcc=request.bcc,
+            subject=request.subject,
+            body_text=request.body_text,
+            body_html=request.body_html,
+            attachments=[att.dict() for att in request.attachments or []],
+            thread_id=request.thread_id,
+        )
+
+        message_data = result.get("message", {}) if isinstance(result, dict) else {}
+        response_message = SentMessage(
+            id=message_data.get("id", ""),
+            thread_id=message_data.get("threadId"),
+            label_ids=message_data.get("labelIds")
+        ) if message_data else None
+
+        return DraftResponse(
+            id=result.get("id", ""),
+            message=response_message
+        )
+    except Exception as e:
+        gmail_logger.error(
+            action="create_draft",
+            message="Failed to create draft",
+            error=e
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create draft: {str(e)}")
+
+
+@router.get(
+    "/drafts/{draft_id}",
+    response_model=DraftResponse,
+    summary="Get Gmail Draft",
+    description="Retrieves a Gmail draft by ID."
+)
+def get_draft(
+    draft_id: str,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to read drafts")
+
+    try:
+        result = gmail_service.get_draft(draft_id)
+        message_data = result.get("message", {}) if isinstance(result, dict) else {}
+        response_message = SentMessage(
+            id=message_data.get("id", ""),
+            thread_id=message_data.get("threadId"),
+            label_ids=message_data.get("labelIds")
+        ) if message_data else None
+
+        return DraftResponse(
+            id=result.get("id", draft_id),
+            message=response_message
+        )
+    except Exception as e:
+        if "404" in str(e):
+            raise HTTPException(status_code=404, detail=f"Draft {draft_id} not found")
+        raise HTTPException(status_code=500, detail=f"Failed to get draft: {str(e)}")
+
+
+@router.put(
+    "/drafts/{draft_id}",
+    response_model=DraftResponse,
+    summary="Update Gmail Draft",
+    description="Updates the contents of an existing Gmail draft."
+)
+def update_draft(
+    draft_id: str,
+    request: DraftRequest,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to update drafts")
+
+    try:
+        raw_message = gmail_service._build_message(
+            to=request.to,
+            subject=request.subject,
+            body_text=request.body_text,
+            body_html=request.body_html,
+            cc=request.cc,
+            bcc=request.bcc,
+            attachments=[att.dict() for att in request.attachments or []],
+        )
+        message_body = {"raw": raw_message}
+        if request.thread_id:
+            message_body["threadId"] = request.thread_id
+
+        result = gmail_service.update_draft(draft_id, message=message_body)
+        message_data = result.get("message", {}) if isinstance(result, dict) else {}
+        response_message = SentMessage(
+            id=message_data.get("id", ""),
+            thread_id=message_data.get("threadId"),
+            label_ids=message_data.get("labelIds")
+        ) if message_data else None
+
+        return DraftResponse(
+            id=result.get("id", draft_id),
+            message=response_message
+        )
+    except Exception as e:
+        if "404" in str(e):
+            raise HTTPException(status_code=404, detail=f"Draft {draft_id} not found")
+        raise HTTPException(status_code=500, detail=f"Failed to update draft: {str(e)}")
+
+
+@router.delete(
+    "/drafts/{draft_id}",
+    summary="Delete Gmail Draft",
+    description="Deletes a Gmail draft."
+)
+def delete_draft(
+    draft_id: str,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to delete drafts")
+
+    try:
+        gmail_service.delete_draft(draft_id)
+        return {"status": "deleted", "id": draft_id}
+    except Exception as e:
+        if "404" in str(e):
+            raise HTTPException(status_code=404, detail=f"Draft {draft_id} not found")
+        raise HTTPException(status_code=500, detail=f"Failed to delete draft: {str(e)}")
+
+
+@router.post(
+    "/messages/{message_id}/labels",
+    response_model=LabelUpdateResponse,
+    summary="Update Gmail Labels",
+    description="Adds or removes labels on a Gmail message."
+)
+def update_labels(
+    message_id: str,
+    request: LabelUpdateRequest,
+    gmail_service: GmailService = Depends(get_gmail_send_service),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        raise HTTPException(status_code=403, detail="Access denied: You do not have permission to update labels")
+
+    try:
+        result = gmail_service.update_labels(
+            message_id=message_id,
+            add_labels=request.add_labels,
+            remove_labels=request.remove_labels,
+        )
+        return LabelUpdateResponse(
+            id=result.get("id", message_id),
+            label_ids=result.get("labelIds", [])
+        )
+    except Exception as e:
+        if "404" in str(e):
+            raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
+        raise HTTPException(status_code=500, detail=f"Failed to update labels: {str(e)}")
