@@ -90,8 +90,9 @@ class TestGmailRetryBehavior:
             with pytest.raises(RetryExhausted):
                 service.list_messages()
             
-            # Should have tried: initial + 3 retries = 4 total
-            assert mock_execute.call_count == 4
+            # Should have tried: initial attempt + 3 retries = 4 total
+            max_retries = 3
+            assert mock_execute.call_count == max_retries + 1
     
     def test_get_message_retry_on_500(self):
         """Test that get_message retries on 500 errors."""
