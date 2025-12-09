@@ -7,6 +7,7 @@ import models
 from services.google_calendar_service import GoogleCalendarService
 from services.google_drive_real import GoogleDriveRealService
 from services.google_drive_mock import GoogleDriveService
+from utils.structured_logging import calendar_logger
 import logging
 from config import config
 
@@ -36,6 +37,15 @@ class SchedulerService:
                 self.reconcile_drive_state_job,
                 IntervalTrigger(hours=1), 
                 id="reconcile_drive",
+                replace_existing=True
+            )
+            
+            # Cleanup old calendar events (Every 24 hours)
+            # Archives/deletes events older than retention period
+            self.scheduler.add_job(
+                self.cleanup_old_events_job,
+                IntervalTrigger(hours=24),
+                id="cleanup_old_events",
                 replace_existing=True
             )
             
@@ -70,6 +80,33 @@ class SchedulerService:
             self.reconcile_folders(db)
         except Exception as e:
             logger.error(f"Error in reconciliation job: {e}")
+        finally:
+            db.close()
+    
+    def cleanup_old_events_job(self):
+        """
+        Job wrapper for cleaning up old calendar events.
+        """
+        calendar_logger.info(
+            action="cleanup_job",
+            status="started",
+            message="Running calendar event cleanup job"
+        )
+        db = SessionLocal()
+        try:
+            count = self.cleanup_old_calendar_events(db)
+            calendar_logger.info(
+                action="cleanup_job",
+                status="success",
+                message=f"Cleaned up {count} old calendar events",
+                cleaned_count=count
+            )
+        except Exception as e:
+            calendar_logger.error(
+                action="cleanup_job",
+                message="Error in cleanup job",
+                error=e
+            )
         finally:
             db.close()
 
@@ -167,5 +204,36 @@ class SchedulerService:
                 else:
                     # Other errors (network, auth), log and skip
                     logger.warning(f"Reconcile check failed for {folder.folder_id}: {e}")
+    
+    def cleanup_old_calendar_events(self, db: Session) -> int:
+        """
+        Archive or delete calendar events older than retention period.
+        
+        Args:
+            db: Database session
+        
+        Returns:
+            Number of events cleaned up
+        """
+        retention_days = config.CALENDAR_EVENT_RETENTION_DAYS
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        
+        # Find old events (ended more than retention_days ago)
+        old_events = db.query(models.CalendarEvent).filter(
+            models.CalendarEvent.end_time < cutoff_date,
+            models.CalendarEvent.status != 'cancelled'  # Don't double-process cancelled events
+        ).all()
+        
+        count = 0
+        for event in old_events:
+            # Mark as cancelled (soft delete approach)
+            event.status = 'cancelled'
+            count += 1
+        
+        if count > 0:
+            db.commit()
+            logger.info(f"Marked {count} old events as cancelled (older than {retention_days} days)")
+        
+        return count
 
 scheduler_service = SchedulerService()

@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 from services.google_auth import GoogleAuthService
+from utils.retry import exponential_backoff_retry
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
@@ -12,6 +13,7 @@ class GoogleCalendarService:
         if not self.service:
             raise Exception("Calendar Service configuration error: GOOGLE_SERVICE_ACCOUNT_JSON is missing or invalid.")
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def create_event(self, event_data: Dict[str, Any], calendar_id: str = 'primary') -> Dict[str, Any]:
         """
         Creates an event in the specified calendar.
@@ -30,6 +32,7 @@ class GoogleCalendarService:
 
         return event
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def list_events(self, calendar_id: str = 'primary', time_min: Optional[str] = None, time_max: Optional[str] = None, sync_token: Optional[str] = None) -> Dict[str, Any]:
         """
         Lists events. Supports time filtering and sync tokens.
@@ -53,18 +56,22 @@ class GoogleCalendarService:
 
         return self.service.events().list(**kwargs).execute()
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def get_event(self, event_id: str, calendar_id: str = 'primary') -> Dict[str, Any]:
         self._check_auth()
         return self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def update_event(self, event_id: str, event_data: Dict[str, Any], calendar_id: str = 'primary') -> Dict[str, Any]:
         self._check_auth()
         return self.service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_data).execute()
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def delete_event(self, event_id: str, calendar_id: str = 'primary'):
         self._check_auth()
         return self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def watch_events(self, channel_id: str, webhook_url: str, calendar_id: str = 'primary', token: Optional[str] = None, expiration: Optional[int] = None) -> Dict[str, Any]:
         """
         Register a webhook channel for calendar changes.
@@ -84,6 +91,7 @@ class GoogleCalendarService:
 
         return self.service.events().watch(calendarId=calendar_id, body=body).execute()
 
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def stop_channel(self, channel_id: str, resource_id: str):
         """
         Stop a webhook channel.
