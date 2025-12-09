@@ -18,7 +18,9 @@ from schemas.crm_communication import (
     EmailSummaryForCRM,
     EventSummaryForCRM,
     EmailListForCRMResponse,
-    EventListForCRMResponse
+    EventListForCRMResponse,
+    TimelineItem,
+    TimelineResponse
 )
 from utils.structured_logging import StructuredLogger
 import models
@@ -33,6 +35,9 @@ router = APIRouter(
     prefix="/crm",
     tags=["crm-communication"]
 )
+
+# Configuration constants
+MAX_GMAIL_FETCH_FOR_TIMELINE = 500  # Maximum emails to fetch for timeline endpoint
 
 
 # Dependencies
@@ -554,3 +559,299 @@ def get_entity_events(
             status_code=500,
             detail=f"Failed to retrieve events: {str(e)}"
         )
+
+
+@router.get(
+    "/{entity_type}/{entity_id}/timeline",
+    response_model=TimelineResponse,
+    summary="Get Unified Timeline for CRM Entity",
+    description="Retrieves a unified timeline of emails and calendar events for a CRM entity (Company/Lead/Deal)."
+)
+def get_entity_timeline(
+    entity_type: Literal["company", "lead", "deal"],
+    entity_id: str,
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of results (1-100)"),
+    offset: int = Query(0, ge=0, description="Number of results to skip for pagination"),
+    time_min: Optional[str] = Query(None, description="Filter items after this date (YYYY-MM-DD for emails, ISO for events)"),
+    time_max: Optional[str] = Query(None, description="Filter items before this date (YYYY-MM-DD for emails, ISO for events)"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role"),
+    db: Session = Depends(get_db),
+    gmail_service: GoogleGmailService = Depends(get_gmail_service),
+    contact_service: CRMContactService = Depends(get_contact_service)
+):
+    """
+    Get unified timeline of emails and events for a CRM entity.
+    
+    **Path Parameters:**
+    - **entity_type**: Type of CRM entity (company, lead, or deal)
+    - **entity_id**: UUID of the entity
+    
+    **Query Parameters:**
+    - **limit**: Maximum number of results to return (default: 50, max: 100)
+    - **offset**: Number of results to skip for pagination (default: 0)
+    - **time_min**: Filter items after this date (flexible format)
+    - **time_max**: Filter items before this date (flexible format)
+    
+    **Returns:**
+    - Unified list of timeline items (emails and events merged)
+    - Items sorted by datetime descending (most recent first)
+    - Each item includes source, type, and matched contacts
+    - Total count and pagination information
+    
+    **Note:**
+    - Access requires crm_read_communications permission
+    - Respects gmail_read_body and calendar_read_details permissions
+    - Pagination is applied AFTER merging and sorting
+    
+    **Example:**
+    - GET /api/crm/company/comp-123/timeline?limit=20&offset=0
+    """
+    # Check CRM communication permissions
+    crm_perms = PermissionService.get_crm_permissions_for_role(x_user_role)
+    
+    if not crm_perms.crm_read_communications:
+        crm_comm_logger.warning(
+            action="get_entity_timeline",
+            status="access_denied",
+            message=f"User role '{x_user_role}' does not have crm_read_communications permission",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            role=x_user_role
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: Insufficient permissions to access CRM communications"
+        )
+    
+    # Also check Gmail and Calendar permissions
+    gmail_perms = PermissionService.get_permissions_for_role(x_user_role)
+    calendar_perms = PermissionService.get_calendar_permissions_for_role(x_user_role)
+    
+    crm_comm_logger.info(
+        action="get_entity_timeline",
+        status="authorized",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        role=x_user_role,
+        gmail_read_body=gmail_perms.gmail_read_body,
+        calendar_read_details=calendar_perms.calendar_read_details
+    )
+    
+    # Validate entity type
+    entity_type = validate_entity_type(entity_type)
+    
+    # Verify entity exists
+    verify_entity_exists(entity_type, entity_id, db)
+    
+    # Get contact emails for this entity
+    contact_emails = contact_service.get_entity_contact_emails(entity_type, entity_id)
+    
+    if not contact_emails:
+        crm_comm_logger.warning(
+            action="get_entity_timeline",
+            status="no_contacts",
+            message=f"No contact emails found for {entity_type} {entity_id}",
+            entity_type=entity_type,
+            entity_id=entity_id
+        )
+        return TimelineResponse(
+            items=[],
+            total=0,
+            limit=limit,
+            offset=offset
+        )
+    
+    timeline_items = []
+    
+    # ========== Fetch Emails ==========
+    try:
+        # Build Gmail search query
+        email_queries = [f"from:{email} OR to:{email}" for email in contact_emails]
+        gmail_query = " OR ".join(email_queries)
+        
+        # Add date filters if provided
+        if time_min:
+            gmail_query += f" after:{time_min}"
+        if time_max:
+            gmail_query += f" before:{time_max}"
+        
+        # Fetch emails from Gmail (fetch extra to account for filtering)
+        result = gmail_service.list_messages(
+            query=gmail_query,
+            max_results=MAX_GMAIL_FETCH_FOR_TIMELINE
+        )
+        
+        for msg_ref in result.get('messages', []):
+            msg_data = gmail_service.get_message(msg_ref['id'], format='full')
+            
+            # Parse message headers
+            headers = gmail_service._parse_headers(
+                msg_data.get('payload', {}).get('headers', [])
+            )
+            
+            # Check if this message contains our contact emails
+            matches_found, matched_contacts = email_contains_contacts(
+                headers.get('from'),
+                headers.get('to'),
+                headers.get('cc'),
+                headers.get('bcc'),
+                contact_emails
+            )
+            
+            if matches_found:
+                # Parse internal date
+                # Note: Using naive datetime to match calendar events from database
+                internal_date = None
+                if 'internalDate' in msg_data:
+                    try:
+                        internal_date = datetime.fromtimestamp(
+                            int(msg_data['internalDate']) / 1000
+                        )
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Build participant list
+                participants = []
+                for field in [headers.get('from'), headers.get('to'), headers.get('cc')]:
+                    if field:
+                        participants.extend(extract_email_addresses(field))
+                # Remove duplicates while preserving order
+                participants = list(dict.fromkeys(participants))
+                
+                # Create timeline item for email
+                if internal_date:
+                    timeline_items.append(TimelineItem(
+                        id=msg_data.get('id', ''),
+                        source="gmail",
+                        item_type="email",
+                        subject=headers.get('subject') or "No Subject",
+                        snippet=msg_data.get('snippet'),
+                        item_datetime=internal_date,
+                        participants=participants,
+                        matched_contacts=matched_contacts,
+                        entity_type=entity_type,
+                        entity_id=entity_id
+                    ))
+    
+    except Exception as e:
+        crm_comm_logger.error(
+            action="get_entity_timeline",
+            message=f"Failed to fetch emails for timeline",
+            error=e,
+            entity_type=entity_type,
+            entity_id=entity_id
+        )
+        # Continue to events even if emails fail
+    
+    # ========== Fetch Events ==========
+    try:
+        # Normalize contact emails for comparison
+        contact_set = set(email.lower().strip() for email in contact_emails)
+        
+        # Query calendar events
+        query = db.query(models.CalendarEvent)
+        
+        # Exclude cancelled events by default
+        query = query.filter(models.CalendarEvent.status != 'cancelled')
+        
+        # Apply time filters
+        if time_min:
+            try:
+                # Try to parse as datetime for events
+                time_min_dt = datetime.fromisoformat(time_min.replace('Z', '+00:00'))
+                query = query.filter(models.CalendarEvent.start_time >= time_min_dt)
+            except ValueError:
+                # If parsing fails, skip the filter
+                pass
+        
+        if time_max:
+            try:
+                time_max_dt = datetime.fromisoformat(time_max.replace('Z', '+00:00'))
+                query = query.filter(models.CalendarEvent.end_time <= time_max_dt)
+            except ValueError:
+                pass
+        
+        # Get all events (we'll filter by attendees in Python)
+        all_events = query.order_by(models.CalendarEvent.start_time.desc()).all()
+        
+        # Filter events by attendees
+        for event in all_events:
+            # Parse attendees from JSON
+            attendees_data = []
+            if event.attendees:
+                try:
+                    attendees_data = json.loads(event.attendees)
+                except (json.JSONDecodeError, TypeError):
+                    attendees_data = []
+            
+            # Check if any contact email is in attendees
+            matched_contacts = []
+            participants = []
+            for attendee in attendees_data:
+                attendee_email = attendee.get('email', '').lower().strip()
+                if attendee_email:
+                    participants.append(attendee_email)
+                    if attendee_email in contact_set:
+                        matched_contacts.append(attendee_email)
+            
+            # Add organizer to participants if available
+            if event.organizer_email and event.organizer_email not in participants:
+                participants.append(event.organizer_email)
+            
+            # If we found matching contacts, include this event
+            if matched_contacts:
+                # Prepare snippet based on permissions
+                snippet = None
+                if calendar_perms.calendar_read_details and event.description:
+                    snippet = event.description
+                
+                timeline_items.append(TimelineItem(
+                    id=str(event.google_event_id),
+                    source="calendar",
+                    item_type="event",
+                    subject=event.summary or "No Title",
+                    snippet=snippet,
+                    item_datetime=event.start_time,
+                    participants=participants,
+                    matched_contacts=sorted(matched_contacts),
+                    entity_type=entity_type,
+                    entity_id=entity_id
+                ))
+    
+    except Exception as e:
+        crm_comm_logger.error(
+            action="get_entity_timeline",
+            message=f"Failed to fetch events for timeline",
+            error=e,
+            entity_type=entity_type,
+            entity_id=entity_id
+        )
+        # Continue even if events fail
+    
+    # ========== Merge, Sort, and Paginate ==========
+    # Sort by datetime descending (most recent first)
+    timeline_items.sort(key=lambda item: item.item_datetime, reverse=True)
+    
+    # Apply pagination
+    total = len(timeline_items)
+    paginated_items = timeline_items[offset:offset + limit]
+    
+    crm_comm_logger.info(
+        action="get_entity_timeline",
+        status="success",
+        message=f"Retrieved timeline for {entity_type} {entity_id}",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        total_items=total,
+        contact_count=len(contact_emails),
+        returned_count=len(paginated_items),
+        gmail_items=sum(1 for item in timeline_items if item.source == "gmail"),
+        calendar_items=sum(1 for item in timeline_items if item.source == "calendar")
+    )
+    
+    return TimelineResponse(
+        items=paginated_items,
+        total=total,
+        limit=limit,
+        offset=offset
+    )
