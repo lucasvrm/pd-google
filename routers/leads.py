@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
-from typing import List
+from datetime import datetime, timedelta, timezone
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 import models
@@ -40,10 +41,17 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
 def sales_view(
     page: int = Query(1, ge=1, description="Página atual"),
     page_size: int = Query(20, ge=1, le=100, description="Quantidade por página"),
+    owner_id: Optional[str] = None,
+    status: Optional[str] = None,
+    origin: Optional[str] = None,
+    min_priority_score: Optional[int] = None,
+    has_recent_interaction: Optional[bool] = None,
+    order_by: Literal["priority", "last_interaction", "created_at"] = "priority",
     db: Session = Depends(get_db),
 ):
     base_query = (
         db.query(models.Lead)
+        .outerjoin(models.LeadActivityStats)
         .options(
             joinedload(models.Lead.activity_stats),
             joinedload(models.Lead.owner),
@@ -52,13 +60,51 @@ def sales_view(
         )
     )
 
+    if owner_id:
+        base_query = base_query.filter(models.Lead.owner_id == owner_id)
+    if status:
+        base_query = base_query.filter(models.Lead.status == status)
+    if origin:
+        base_query = base_query.filter(models.Lead.origin == origin)
+    if min_priority_score is not None:
+        base_query = base_query.filter(models.Lead.priority_score >= min_priority_score)
+
+    last_interaction_expr = func.coalesce(
+        models.Lead.last_interaction_at,
+        models.LeadActivityStats.last_interaction_at,
+        models.Lead.updated_at,
+        models.Lead.created_at,
+    )
+
+    if has_recent_interaction is True:
+        threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        base_query = base_query.filter(last_interaction_expr >= threshold)
+    elif has_recent_interaction is False:
+        threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        base_query = base_query.filter(
+            (last_interaction_expr < threshold) | (last_interaction_expr.is_(None))
+        )
+
+    if order_by == "priority":
+        base_query = base_query.order_by(models.Lead.priority_score.desc())
+    elif order_by == "last_interaction":
+        base_query = base_query.order_by(last_interaction_expr.desc().nullslast())
+    else:
+        base_query = base_query.order_by(models.Lead.created_at.desc())
+
     total = base_query.count()
-    leads: List[models.Lead] = base_query.all()
+    leads: List[models.Lead] = base_query.offset((page - 1) * page_size).limit(
+        page_size
+    ).all()
 
     items: List[LeadSalesViewItem] = []
     for lead in leads:
         stats = lead.activity_stats
-        score = calculate_lead_priority(lead, stats)
+        score = (
+            lead.priority_score
+            if lead.priority_score is not None
+            else calculate_lead_priority(lead, stats)
+        )
         bucket = classify_priority_bucket(score)
 
         last_interaction = (

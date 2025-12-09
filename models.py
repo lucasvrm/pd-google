@@ -126,6 +126,8 @@ class Lead(Base):
     owner_id = Column(String, ForeignKey("users.id"), nullable=True)
     primary_contact_id = Column(String, ForeignKey("contacts.id"), nullable=True)
     qualified_company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    last_interaction_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    priority_score = Column(Integer, default=0, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -167,6 +169,11 @@ class LeadActivityStats(Base):
     lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
     engagement_score = Column(Integer, default=0)
     last_interaction_at = Column(DateTime(timezone=True), nullable=True)
+    last_email_at = Column(DateTime(timezone=True), nullable=True)
+    last_event_at = Column(DateTime(timezone=True), nullable=True)
+    total_emails = Column(Integer, default=0)
+    total_events = Column(Integer, default=0)
+    total_interactions = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
