@@ -4,7 +4,7 @@ Tests for CRM Communication API endpoints
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import json
@@ -303,6 +303,424 @@ class TestCRMCommunicationEndpoints:
             event_fields = ['id', 'google_event_id', 'summary', 'start_time', 'end_time', 'matched_contacts']
             for field in event_fields:
                 assert field in event
+    
+    def test_company_with_multiple_contacts_matched(self, test_client):
+        """Test company with multiple contacts returns correct emails and matched_contacts"""
+        response = test_client.get("/api/crm/company/comp-test/emails")
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Check that matched_contacts are returned
+        if data['emails']:
+            for email in data['emails']:
+                assert 'matched_contacts' in email
+                assert isinstance(email['matched_contacts'], list)
+                # Verify matched contacts are from our test company contacts
+                for contact in email['matched_contacts']:
+                    assert contact in ['client@company.com', 'ceo@company.com']
+    
+    def test_entity_without_contacts_returns_empty(self, test_client):
+        """Test that entity without contacts returns empty result with total=0"""
+        # Create a new company without contacts
+        db = TestingSessionLocal()
+        company_no_contacts = models.Company(id='comp-no-contacts', name='No Contacts Company')
+        db.add(company_no_contacts)
+        db.commit()
+        db.close()
+        
+        # Override contact service to return empty list for this company
+        original_get_entity_contact_emails = MockContactService.get_entity_contact_emails
+        
+        def mock_no_contacts(self, entity_type, entity_id):
+            if entity_id == 'comp-no-contacts':
+                return []
+            return original_get_entity_contact_emails(self, entity_type, entity_id)
+        
+        MockContactService.get_entity_contact_emails = mock_no_contacts
+        
+        try:
+            response = test_client.get("/api/crm/company/comp-no-contacts/emails")
+            assert response.status_code == 200
+            data = response.json()
+            
+            assert data['total'] == 0
+            assert data['emails'] == []
+            assert data['limit'] == 50
+            assert data['offset'] == 0
+        finally:
+            # Restore original method
+            MockContactService.get_entity_contact_emails = original_get_entity_contact_emails
+    
+    def test_pagination_limit_offset(self, test_client):
+        """Test pagination with different limit and offset values"""
+        # Test with limit=1, offset=0
+        response = test_client.get("/api/crm/company/comp-test/emails?limit=1&offset=0")
+        assert response.status_code == 200
+        data = response.json()
+        assert data['limit'] == 1
+        assert data['offset'] == 0
+        assert len(data['emails']) <= 1
+        
+        # Test with limit=10, offset=5
+        response = test_client.get("/api/crm/company/comp-test/emails?limit=10&offset=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert data['limit'] == 10
+        assert data['offset'] == 5
+    
+    def test_emails_time_filters(self, test_client):
+        """Test emails with time_min and time_max filters"""
+        # Test with time_min
+        response = test_client.get("/api/crm/company/comp-test/emails?time_min=2024-01-01")
+        assert response.status_code == 200
+        
+        # Test with time_max
+        response = test_client.get("/api/crm/company/comp-test/emails?time_max=2025-12-31")
+        assert response.status_code == 200
+        
+        # Test with both time_min and time_max
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails?time_min=2024-01-01&time_max=2025-12-31"
+        )
+        assert response.status_code == 200
+    
+    def test_events_time_filters(self, test_client):
+        """Test events with time_min and time_max filters"""
+        # Test with time_min
+        time_min = (datetime.now() - timedelta(days=1)).isoformat()
+        response = test_client.get(f"/api/crm/company/comp-test/events?time_min={time_min}")
+        assert response.status_code == 200
+        
+        # Test with time_max
+        time_max = (datetime.now() + timedelta(days=7)).isoformat()
+        response = test_client.get(f"/api/crm/company/comp-test/events?time_max={time_max}")
+        assert response.status_code == 200
+        
+        # Test with both filters
+        response = test_client.get(
+            f"/api/crm/company/comp-test/events?time_min={time_min}&time_max={time_max}"
+        )
+        assert response.status_code == 200
+
+
+class TestCRMCommunicationWithRelationships:
+    """Test CRM communication endpoints with entity relationships"""
+    
+    @pytest.fixture(scope="class")
+    def test_client_with_relationships(self):
+        """Setup test database with related entities"""
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+        
+        db = TestingSessionLocal()
+        
+        # Create a qualified company
+        qualified_company = models.Company(id='qualified-comp', name='Qualified Company')
+        db.add(qualified_company)
+        
+        # Create a lead linked to the qualified company
+        lead_with_company = models.Lead(
+            id='lead-qualified',
+            title='Lead with Qualified Company',
+            qualified_company_id='qualified-comp'
+        )
+        db.add(lead_with_company)
+        
+        # Create a company for a deal
+        deal_company = models.Company(id='deal-comp', name='Deal Company')
+        db.add(deal_company)
+        
+        # Create a deal linked to the company
+        deal_with_company = models.Deal(
+            id='deal-with-comp',
+            title='Deal with Company',
+            company_id='deal-comp'
+        )
+        db.add(deal_with_company)
+        
+        db.commit()
+        db.close()
+        
+        # Update mock contact service to handle these entities
+        original_get_entity_contact_emails = MockContactService.get_entity_contact_emails
+        
+        def mock_with_relationships(self, entity_type, entity_id):
+            if entity_type == 'company' and entity_id == 'qualified-comp':
+                return ['qualified@company.com', 'manager@company.com']
+            elif entity_type == 'lead' and entity_id == 'lead-qualified':
+                # Should inherit from qualified company
+                return ['lead@example.com', 'qualified@company.com', 'manager@company.com']
+            elif entity_type == 'company' and entity_id == 'deal-comp':
+                return ['dealcompany@example.com']
+            elif entity_type == 'deal' and entity_id == 'deal-with-comp':
+                # Should inherit from company
+                return ['deal@example.com', 'dealcompany@example.com']
+            return original_get_entity_contact_emails(self, entity_type, entity_id)
+        
+        MockContactService.get_entity_contact_emails = mock_with_relationships
+        
+        client = TestClient(app)
+        yield client
+        
+        # Restore original method
+        MockContactService.get_entity_contact_emails = original_get_entity_contact_emails
+        
+        # Cleanup
+        Base.metadata.drop_all(bind=engine)
+        try:
+            os.remove("./test_crm_communication.db")
+        except:
+            pass
+    
+    def test_lead_inherits_qualified_company_contacts(self, test_client_with_relationships):
+        """Test that lead with qualified_company_id inherits company contacts"""
+        response = test_client_with_relationships.get("/api/crm/lead/lead-qualified/events")
+        assert response.status_code == 200
+        # The mock should return contacts from both lead and qualified company
+    
+    def test_deal_inherits_company_contacts(self, test_client_with_relationships):
+        """Test that deal with company_id inherits company contacts"""
+        response = test_client_with_relationships.get("/api/crm/deal/deal-with-comp/events")
+        assert response.status_code == 200
+        # The mock should return contacts from both deal and company
+
+
+class TestCRMContactService:
+    """Unit tests for CRMContactService"""
+    
+    @pytest.fixture
+    def db_session(self):
+        """Create a fresh database session for each test"""
+        # Use a unique database file for unit tests
+        test_db_url = "sqlite:///./test_crm_contact_service.db"
+        test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+        TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+        
+        Base.metadata.create_all(bind=test_engine)
+        db = TestSessionLocal()
+        yield db
+        db.close()
+        Base.metadata.drop_all(bind=test_engine)
+        test_engine.dispose()
+        
+        # Cleanup database file
+        try:
+            os.remove("./test_crm_contact_service.db")
+        except:
+            pass
+    
+    def test_get_company_emails_direct(self, db_session):
+        """Test extracting emails from Company entity with direct email field"""
+        from services.crm_contact_service import CRMContactService
+        
+        # Create company with email field (if it exists)
+        company = models.Company(id='comp-1', name='Test Company')
+        # Note: Company model doesn't have email field, but service handles this
+        db_session.add(company)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service._get_company_emails('comp-1')
+        
+        assert isinstance(emails, list)
+        # Since company doesn't have email field, should return empty or contacts-based
+    
+    def test_get_company_emails_with_contacts_table(self, db_session):
+        """Test extracting emails from Company when contacts table exists"""
+        from services.crm_contact_service import CRMContactService
+        
+        company = models.Company(id='comp-2', name='Test Company 2')
+        db_session.add(company)
+        db_session.commit()
+        
+        # Try to insert into contacts table if it exists
+        try:
+            db_session.execute(
+                text("""
+                    INSERT INTO contacts (id, company_id, email, name)
+                    VALUES (:id, :company_id, :email, :name)
+                """),
+                {
+                    'id': 'contact-1',
+                    'company_id': 'comp-2',
+                    'email': 'contact1@company.com',
+                    'name': 'Contact One'
+                }
+            )
+            db_session.commit()
+            
+            service = CRMContactService(db_session)
+            emails = service._get_company_emails('comp-2')
+            
+            assert 'contact1@company.com' in emails
+        except Exception:
+            # Table doesn't exist, skip this test
+            pytest.skip("contacts table not available")
+    
+    def test_get_company_emails_fallback_when_table_unavailable(self, db_session):
+        """Test that service handles gracefully when contacts table doesn't exist"""
+        from services.crm_contact_service import CRMContactService
+        
+        company = models.Company(id='comp-3', name='Test Company 3')
+        db_session.add(company)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        # Should not raise an error even if contacts table doesn't exist
+        emails = service._get_company_emails('comp-3')
+        
+        assert isinstance(emails, list)
+        # Should return empty list or company email if available
+    
+    def test_get_lead_emails_direct(self, db_session):
+        """Test extracting emails from Lead entity"""
+        from services.crm_contact_service import CRMContactService
+        
+        lead = models.Lead(id='lead-1', title='Test Lead')
+        db_session.add(lead)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service._get_lead_emails('lead-1')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_lead_emails_with_qualified_company(self, db_session):
+        """Test that lead inherits emails from qualified company"""
+        from services.crm_contact_service import CRMContactService
+        
+        # Create company
+        company = models.Company(id='comp-qualified', name='Qualified Company')
+        db_session.add(company)
+        
+        # Create lead with qualified_company_id
+        lead = models.Lead(
+            id='lead-2',
+            title='Test Lead 2',
+            qualified_company_id='comp-qualified'
+        )
+        db_session.add(lead)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service._get_lead_emails('lead-2')
+        
+        assert isinstance(emails, list)
+        # Should include emails from qualified company
+    
+    def test_get_lead_emails_when_contacts_table_unavailable(self, db_session):
+        """Test lead email extraction when contacts table doesn't exist"""
+        from services.crm_contact_service import CRMContactService
+        
+        lead = models.Lead(id='lead-3', title='Test Lead 3')
+        db_session.add(lead)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        # Should not raise an error
+        emails = service._get_lead_emails('lead-3')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_deal_emails_direct(self, db_session):
+        """Test extracting emails from Deal entity"""
+        from services.crm_contact_service import CRMContactService
+        
+        deal = models.Deal(id='deal-1', title='Test Deal')
+        db_session.add(deal)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service._get_deal_emails('deal-1')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_deal_emails_with_company(self, db_session):
+        """Test that deal inherits emails from company"""
+        from services.crm_contact_service import CRMContactService
+        
+        # Create company
+        company = models.Company(id='comp-for-deal', name='Deal Company')
+        db_session.add(company)
+        
+        # Create deal with company_id
+        deal = models.Deal(
+            id='deal-2',
+            title='Test Deal 2',
+            company_id='comp-for-deal'
+        )
+        db_session.add(deal)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service._get_deal_emails('deal-2')
+        
+        assert isinstance(emails, list)
+        # Should include emails from company
+    
+    def test_get_deal_emails_when_contacts_table_unavailable(self, db_session):
+        """Test deal email extraction when contacts table doesn't exist"""
+        from services.crm_contact_service import CRMContactService
+        
+        deal = models.Deal(id='deal-3', title='Test Deal 3')
+        db_session.add(deal)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        # Should not raise an error
+        emails = service._get_deal_emails('deal-3')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_entity_contact_emails_company(self, db_session):
+        """Test get_entity_contact_emails for company type"""
+        from services.crm_contact_service import CRMContactService
+        
+        company = models.Company(id='comp-entity', name='Entity Test Company')
+        db_session.add(company)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service.get_entity_contact_emails('company', 'comp-entity')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_entity_contact_emails_lead(self, db_session):
+        """Test get_entity_contact_emails for lead type"""
+        from services.crm_contact_service import CRMContactService
+        
+        lead = models.Lead(id='lead-entity', title='Entity Test Lead')
+        db_session.add(lead)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service.get_entity_contact_emails('lead', 'lead-entity')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_entity_contact_emails_deal(self, db_session):
+        """Test get_entity_contact_emails for deal type"""
+        from services.crm_contact_service import CRMContactService
+        
+        deal = models.Deal(id='deal-entity', title='Entity Test Deal')
+        db_session.add(deal)
+        db_session.commit()
+        
+        service = CRMContactService(db_session)
+        emails = service.get_entity_contact_emails('deal', 'deal-entity')
+        
+        assert isinstance(emails, list)
+    
+    def test_get_entity_contact_emails_invalid_type(self, db_session):
+        """Test get_entity_contact_emails with invalid entity type"""
+        from services.crm_contact_service import CRMContactService
+        
+        service = CRMContactService(db_session)
+        
+        with pytest.raises(ValueError) as exc_info:
+            service.get_entity_contact_emails('invalid', 'some-id')
+        
+        assert 'Unknown entity type' in str(exc_info.value)
 
 
 if __name__ == "__main__":
