@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from services.google_drive_mock import GoogleDriveService
 from services.google_drive_real import GoogleDriveRealService
+from services.drive_permissions_service import DrivePermissionsService
 from services.template_service import TemplateService
 from services.permission_service import PermissionService
 from services.hierarchy_service import HierarchyService
@@ -18,6 +19,12 @@ from datetime import datetime, timezone
 import json
 import traceback
 import math
+from schemas.drive_permissions import (
+    DrivePermission,
+    DrivePermissionCreate,
+    DrivePermissionUpdate,
+    MoveDriveItemRequest,
+)
 
 router = APIRouter()
 
@@ -28,6 +35,7 @@ if config.USE_MOCK_DRIVE:
 else:
     print("Using REAL Drive Service")
     drive_service = GoogleDriveRealService()
+drive_permissions_service = DrivePermissionsService(drive_service)
 
 # --- Pydantic Schemas ---
 
@@ -60,6 +68,46 @@ class RenameFileRequest(BaseModel):
 class SyncNameRequest(BaseModel):
     entity_type: str
     entity_id: str
+
+
+def _get_entity_folder_or_404(db: Session, entity_type: str, entity_id: str):
+    entity_folder = (
+        db.query(models.DriveFolder)
+        .filter(
+            models.DriveFolder.entity_type == entity_type,
+            models.DriveFolder.entity_id == entity_id,
+        )
+        .first()
+    )
+    if not entity_folder:
+        raise HTTPException(
+            status_code=404,
+            detail="Entity root folder not found. Call list (GET) first to initialize structure.",
+        )
+    return entity_folder
+
+
+def _validate_file_hierarchy(file_id: str, entity_folder) -> Dict[str, Any]:
+    try:
+        file_meta = drive_service.get_file(file_id)
+        parents = file_meta.get("parents", [])
+
+        if not parents:
+            if file_id == entity_folder.folder_id:
+                raise HTTPException(status_code=403, detail="Cannot mutate the root entity folder via this endpoint.")
+            raise HTTPException(status_code=403, detail="File is orphaned or inaccessible.")
+
+        parent_id = parents[0]
+        if not drive_service.is_descendant(parent_id, entity_folder.folder_id) and parent_id != entity_folder.folder_id:
+            raise HTTPException(status_code=403, detail="File does not belong to this entity's hierarchy.")
+
+        return file_meta
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "404" in str(e):
+            raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def get_db():
     db = SessionLocal()
@@ -386,47 +434,13 @@ def rename_file(
         )
 
     # 2. Get root folder
-    entity_folder = (
-        db.query(models.DriveFolder)
-        .filter(
-            models.DriveFolder.entity_type == entity_type,
-            models.DriveFolder.entity_id == entity_id,
-        )
-        .first()
-    )
-
-    if not entity_folder:
-        raise HTTPException(
-            status_code=404,
-            detail="Entity root folder not found.",
-        )
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
 
     # 3. Verify File Lineage
-    # We need to know if the file's parent is within the hierarchy
-    # get_file returns parents list
-    try:
-        file_meta = drive_service.get_file(file_id)
-        parents = file_meta.get('parents', [])
-
-        if not parents:
-            # If no parents, it's orphan or root (if root, can we rename? Maybe not root entity folder)
-            if file_id == entity_folder.folder_id:
-                 raise HTTPException(status_code=403, detail="Cannot rename the root entity folder via this endpoint.")
-            # For orphans, we block
-            raise HTTPException(status_code=403, detail="File is orphaned or inaccessible.")
-
-        parent_id = parents[0]
-        if not drive_service.is_descendant(parent_id, entity_folder.folder_id) and parent_id != entity_folder.folder_id:
-             raise HTTPException(status_code=403, detail="File does not belong to this entity's hierarchy.")
-
-    except Exception as e:
-        # If get_file fails, return 404 or 500
-        if "404" in str(e):
-             raise HTTPException(status_code=404, detail="File not found")
-        raise HTTPException(status_code=500, detail=str(e))
+    _validate_file_hierarchy(file_id, entity_folder)
 
     # 4. Perform Rename
-    updated_file = drive_service.update_file_metadata(file_id, request.new_name)
+    updated_file = drive_permissions_service.rename(file_id, request.new_name)
 
     # 5. Update local DB if exists
     # If it's a file
@@ -463,6 +477,187 @@ def rename_file(
     db.commit()
 
     return updated_file
+
+
+@router.put("/drive/{entity_type}/{entity_id}/files/{file_id}/move")
+def move_file(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    request: MoveDriveItemRequest,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(
+            status_code=403, detail="User does not have permission to move files"
+        )
+
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
+    _validate_file_hierarchy(file_id, entity_folder)
+
+    # Validate destination is within hierarchy
+    if not drive_service.is_descendant(request.destination_parent_id, entity_folder.folder_id) and request.destination_parent_id != entity_folder.folder_id:
+        raise HTTPException(status_code=403, detail="Destination is not part of this entity's hierarchy.")
+
+    moved_file = drive_permissions_service.move_file(file_id, request.destination_parent_id)
+
+    audit_metadata = {
+        "user_id": current_user.id,
+        "user_role": current_user.role,
+        "action": "move_file",
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "file_id": file_id,
+        "destination_parent_id": request.destination_parent_id,
+    }
+    audit_entry = models.DriveChangeLog(
+        channel_id="api_action",
+        resource_id=file_id,
+        resource_state="updated",
+        changed_resource_id=file_id,
+        event_type="file_move",
+        raw_headers=json.dumps(audit_metadata),
+    )
+    db.add(audit_entry)
+    db.commit()
+
+    return moved_file
+
+
+@router.get(
+    "/drive/{entity_type}/{entity_id}/files/{file_id}/permissions",
+    response_model=List[DrivePermission],
+)
+def list_drive_permissions(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(status_code=403, detail="User does not have permission to view access controls")
+
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
+    _validate_file_hierarchy(file_id, entity_folder)
+
+    return drive_permissions_service.list_permissions(file_id)
+
+
+@router.post(
+    "/drive/{entity_type}/{entity_id}/files/{file_id}/permissions",
+    response_model=DrivePermission,
+)
+def add_drive_permission(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    request: DrivePermissionCreate,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
+
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
+    _validate_file_hierarchy(file_id, entity_folder)
+
+    return drive_permissions_service.add_permission(
+        file_id,
+        role=request.role,
+        email=request.email,
+        type=request.type,
+    )
+
+
+@router.put(
+    "/drive/{entity_type}/{entity_id}/files/{file_id}/permissions/{permission_id}",
+    response_model=DrivePermission,
+)
+def update_drive_permission(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    permission_id: str,
+    request: DrivePermissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
+
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
+    _validate_file_hierarchy(file_id, entity_folder)
+
+    return drive_permissions_service.update_permission(file_id, permission_id, request.role)
+
+
+@router.delete(
+    "/drive/{entity_type}/{entity_id}/files/{file_id}/permissions/{permission_id}",
+    status_code=204,
+)
+def delete_drive_permission(
+    entity_type: str,
+    entity_id: str,
+    file_id: str,
+    permission_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user),
+):
+    allowed_types = ["company", "lead", "deal"]
+    if entity_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
+
+    perm_service = PermissionService(db)
+    permission = perm_service.get_drive_permission_from_app_role(
+        current_user.role, entity_type
+    )
+
+    if permission == "reader":
+        raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
+
+    entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
+    _validate_file_hierarchy(file_id, entity_folder)
+
+    drive_permissions_service.remove_permission(file_id, permission_id)
+    return None
 
 
 @router.delete("/drive/{entity_type}/{entity_id}/files/{file_id}")
