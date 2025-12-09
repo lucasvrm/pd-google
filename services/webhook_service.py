@@ -26,10 +26,18 @@ class WebhookService:
             self.drive_service = GoogleDriveService()
         else:
             self.drive_service = GoogleDriveRealService()
+
+    @staticmethod
+    def validate_webhook_secret(token: Optional[str]) -> None:
+        """Ensure the provided webhook token matches configuration."""
+        if config.WEBHOOK_SECRET is None:
+            return
+        if token != config.WEBHOOK_SECRET:
+            raise ValueError("Invalid webhook token")
     
     def register_webhook_channel(
-        self, 
-        folder_id: str, 
+        self,
+        folder_id: str,
         resource_type: str = "folder",
         ttl_hours: int = 24
     ) -> models.DriveWebhookChannel:

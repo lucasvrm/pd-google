@@ -1,6 +1,6 @@
 """
 Retry utility with exponential backoff for Google API calls.
-Handles transient errors (5xx, timeouts) with retry, 
+Handles transient errors (5xx, timeouts) with retry,
 and fails immediately on permanent errors (4xx except 429).
 """
 
@@ -178,3 +178,51 @@ def retry_on_transient_errors(
         initial_delay=initial_delay
     )(func)
     return decorated_func(*args, **kwargs)
+
+
+def run_with_backoff(
+    func: Callable[..., T],
+    *args,
+    operation_name: Optional[str] = None,
+    logger: Optional[logging.Logger] = None,
+    call_kwargs: Optional[dict] = None,
+    **retry_kwargs,
+) -> T:
+    """
+    Execute a function with exponential backoff without decorating it.
+
+    This helper is useful for wrapping SDK calls inline while keeping
+    retry configuration in a single place.
+
+    Args:
+        func: Callable to execute.
+        *args: Positional args passed to the callable.
+        operation_name: Optional name for logging context.
+        logger: Optional logger for retry lifecycle events.
+        call_kwargs: Keyword args passed to the callable.
+        **retry_kwargs: Parameters forwarded to ``exponential_backoff_retry``.
+
+    Returns:
+        The result of the callable after retries.
+    """
+
+    retry_kwargs.setdefault("max_retries", 3)
+    retry_kwargs.setdefault("initial_delay", 1.0)
+
+    decorated = exponential_backoff_retry(**retry_kwargs)(func)
+
+    try:
+        result = decorated(*args, **(call_kwargs or {}))
+        if logger and operation_name:
+            logger.info(
+                "Retry operation succeeded",
+                extra={"operation": operation_name, "retries": retry_kwargs.get("max_retries", 3)},
+            )
+        return result
+    except Exception as exc:
+        if logger and operation_name:
+            logger.error(
+                "Retry operation failed",
+                extra={"operation": operation_name, "error": str(exc)},
+            )
+        raise

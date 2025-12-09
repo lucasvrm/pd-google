@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from services.google_calendar_service import GoogleCalendarService
 from services.google_drive_real import GoogleDriveRealService
+from services.webhook_service import WebhookService
 from utils.retry import exponential_backoff_retry
 from utils.structured_logging import calendar_logger
 import logging
@@ -27,6 +28,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _validate_token_or_raise(token: Optional[str]):
+    """Validate webhook secrets using shared service helper."""
+    try:
+        WebhookService.validate_webhook_secret(token)
+    except ValueError as exc:
+        logger.warning(f"Invalid webhook token provided: {exc}")
+        raise HTTPException(status_code=403, detail=str(exc))
 
 
 @router.post("/webhooks/google-drive")
@@ -78,14 +88,7 @@ async def handle_drive_webhook(db, channel, state, token, uri, changed):
     if not channel.active:
         return {"status": "ignored", "reason": "inactive_channel"}
     
-    # Strict webhook token validation
-    if config.WEBHOOK_SECRET:
-        if token != config.WEBHOOK_SECRET:
-            logger.warning(f"Invalid webhook token for Drive channel {channel.channel_id}")
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid webhook token"
-            )
+    _validate_token_or_raise(token)
     
     if state == "sync":
         logger.info(f"Drive Sync Handshake: {channel.channel_id}")
@@ -225,18 +228,7 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
         )
         return {"status": "ignored", "reason": "inactive_channel"}
 
-    # Strict webhook token validation
-    if config.WEBHOOK_SECRET:
-        if token != config.WEBHOOK_SECRET:
-            calendar_logger.warning(
-                action="webhook_received",
-                status="error",
-                message=f"Invalid webhook token for Calendar channel {channel.channel_id}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid webhook token"
-            )
+    _validate_token_or_raise(token)
 
     if state == "sync":
         calendar_logger.info(
