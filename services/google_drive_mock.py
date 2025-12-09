@@ -24,9 +24,14 @@ class GoogleDriveService:
                 "files": {},
                 "folders": {
                     "root": {"id": "root", "name": "My Drive", "parents": []}
-                }
+                },
+                "permissions": {}
             }
             self._save_db()
+
+        # Ensure permissions key exists for backward compatibility
+        if "permissions" not in self.db:
+            self.db["permissions"] = {}
 
     def _save_db(self):
         with open(DB_FILE, "w") as f:
@@ -66,6 +71,7 @@ class GoogleDriveService:
             "webViewLink": f"https://mock-drive.google.com/folders/{folder_id}"
         }
         self.db["folders"][folder_id] = folder
+        self.db["permissions"].setdefault(folder_id, [])
         self._save_db()
         return folder
 
@@ -83,6 +89,7 @@ class GoogleDriveService:
             "webViewLink": f"https://mock-drive.google.com/file/d/{file_id}/view"
         }
         self.db["files"][file_id] = file_meta
+        self.db["permissions"].setdefault(file_id, [])
         self._save_db()
         return file_meta
 
@@ -113,6 +120,51 @@ class GoogleDriveService:
             self._save_db()
             return item
         raise Exception("File not found")
+
+    def move_file(self, file_id: str, destination_parent_id: str) -> Dict[str, Any]:
+        self._load_db()
+        item = self.get_file(file_id)
+        if not item:
+            raise Exception("File not found")
+
+        current_parents = item.get("parents", [])
+        if destination_parent_id not in current_parents:
+            new_parents = [destination_parent_id]
+            item["parents"] = new_parents
+            self._save_db()
+        return item
+
+    def list_permissions(self, file_id: str) -> List[Dict[str, Any]]:
+        self._load_db()
+        return list(self.db.get("permissions", {}).get(file_id, []))
+
+    def add_permission(self, file_id: str, role: str, email: str, type: str = "user") -> Dict[str, Any]:
+        self._load_db()
+        permission = {
+            "id": str(uuid.uuid4()),
+            "role": role,
+            "emailAddress": email,
+            "type": type,
+        }
+        self.db.setdefault("permissions", {}).setdefault(file_id, []).append(permission)
+        self._save_db()
+        return permission
+
+    def update_permission(self, file_id: str, permission_id: str, role: str) -> Dict[str, Any]:
+        self._load_db()
+        permissions = self.db.setdefault("permissions", {}).setdefault(file_id, [])
+        for perm in permissions:
+            if perm.get("id") == permission_id:
+                perm["role"] = role
+                self._save_db()
+                return perm
+        raise Exception("Permission not found")
+
+    def remove_permission(self, file_id: str, permission_id: str) -> None:
+        self._load_db()
+        permissions = self.db.setdefault("permissions", {}).setdefault(file_id, [])
+        self.db["permissions"][file_id] = [p for p in permissions if p.get("id") != permission_id]
+        self._save_db()
 
     def is_descendant(self, folder_id: str, ancestor_id: str) -> bool:
         self._load_db()

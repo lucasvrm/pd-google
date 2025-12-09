@@ -241,6 +241,73 @@ class GoogleDriveRealService:
 
         return self._retry_operation(_api_call)
 
+    def list_permissions(self, file_id: str) -> List[Dict[str, Any]]:
+        self._check_auth()
+
+        def _api_call():
+            return self.service.permissions().list(
+                fileId=file_id,
+                fields='permissions(id,role,type,emailAddress)',
+                supportsAllDrives=True
+            ).execute()
+
+        result = self._retry_operation(_api_call)
+        return result.get('permissions', [])
+
+    def update_permission(self, file_id: str, permission_id: str, role: str) -> Dict[str, Any]:
+        self._check_auth()
+
+        def _api_call():
+            return self.service.permissions().update(
+                fileId=file_id,
+                permissionId=permission_id,
+                body={'role': role},
+                fields='id,role,type,emailAddress',
+                supportsAllDrives=True
+            ).execute()
+
+        return self._retry_operation(_api_call)
+
+    def remove_permission(self, file_id: str, permission_id: str) -> None:
+        self._check_auth()
+
+        def _api_call():
+            return self.service.permissions().delete(
+                fileId=file_id,
+                permissionId=permission_id,
+                supportsAllDrives=True
+            ).execute()
+
+        self._retry_operation(_api_call)
+
+    def move_file(self, file_id: str, destination_parent_id: str) -> Dict[str, Any]:
+        self._check_auth()
+
+        try:
+            metadata = self.get_file(file_id)
+            current_parents = metadata.get('parents', [])
+            remove_parents = ','.join(current_parents) if current_parents else None
+        except Exception:
+            remove_parents = None
+
+        def _api_call():
+            return self.service.files().update(
+                fileId=file_id,
+                addParents=destination_parent_id,
+                removeParents=remove_parents,
+                fields='id, name, mimeType, parents, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+
+        # Invalidate caches for involved parents
+        if remove_parents:
+            for parent in remove_parents.split(','):
+                cache_service.delete_key(f"drive:list_files:{parent}")
+
+        cache_service.delete_key(f"drive:list_files:{destination_parent_id}")
+
+        return self._retry_operation(_api_call)
+
     def is_descendant(self, folder_id: str, ancestor_id: str) -> bool:
         """
         Verifies if folder_id is a descendant of ancestor_id.
