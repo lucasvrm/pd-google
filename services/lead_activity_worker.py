@@ -96,6 +96,7 @@ class LeadActivityWorker:
             message="Lead activity refresh finished",
             processed=processed,
             errors=len(errors),
+            errors_by_lead=errors,
             duration_seconds=round(duration, 2),
         )
 

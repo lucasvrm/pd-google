@@ -26,6 +26,7 @@ class LeadPriorityWorker:
         started = time.time()
         processed = 0
         errors = 0
+        errors_by_lead: list[str] = []
 
         db = self.session_factory()
         try:
@@ -43,6 +44,7 @@ class LeadPriorityWorker:
                     processed += 1
                 except Exception as exc:  # pragma: no cover - worker error path
                     errors += 1
+                    errors_by_lead.append(lead.id)
                     priority_logger.error(
                         action="lead_priority_score",
                         message="Failed to refresh lead priority",
@@ -62,6 +64,7 @@ class LeadPriorityWorker:
             message="Lead priority refresh finished",
             processed=processed,
             errors=errors,
+            errors_by_lead=errors_by_lead,
             duration_seconds=round(duration, 2),
         )
 
