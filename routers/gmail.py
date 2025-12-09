@@ -3,11 +3,12 @@ Gmail API Router
 Provides read-only endpoints for accessing Gmail messages, threads, and labels.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from typing import Optional, List
 from datetime import datetime
 
 from services.google_gmail_service import GoogleGmailService
+from services.permission_service import PermissionService
 from utils.structured_logging import StructuredLogger
 from schemas.gmail import (
     MessageSummary,
@@ -182,7 +183,8 @@ def list_messages(
     time_min: Optional[str] = Query(None, description="Filter messages after this date (YYYY-MM-DD)"),
     time_max: Optional[str] = Query(None, description="Filter messages before this date (YYYY-MM-DD)"),
     page_token: Optional[str] = Query(None, description="Token for pagination (from previous response)"),
-    page_size: int = Query(50, ge=1, le=100, description="Number of messages per page (max 100)")
+    page_size: int = Query(50, ge=1, le=100, description="Number of messages per page (max 100)"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
 ):
     """
     List email messages from Gmail.
@@ -207,6 +209,20 @@ def list_messages(
     - Get messages with label: `?label=IMPORTANT`
     - Combined filters: `?from_email=john@example.com&time_min=2024-01-01`
     """
+    # Check permissions
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="list_messages",
+            status="forbidden",
+            message="Access denied: User does not have permission to read Gmail metadata",
+            role=x_user_role or "none"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read Gmail messages"
+        )
+    
     service = get_gmail_service()
     
     # Build search query
@@ -273,7 +289,8 @@ def list_messages(
     description="Retrieves complete details of a specific email message including body content and attachments."
 )
 def get_message(
-    message_id: str
+    message_id: str,
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
 ):
     """
     Get detailed information about a specific email message.
@@ -294,19 +311,49 @@ def get_message(
     - The HTML body is returned as-is from Gmail. Frontend should sanitize before rendering.
     - Attachment content is not included; use the attachment ID to download separately if needed.
     """
+    # Check permissions
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="get_message",
+            status="forbidden",
+            message=f"Access denied: User does not have permission to read Gmail metadata for message {message_id}",
+            role=x_user_role or "none",
+            message_id=message_id
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read Gmail messages"
+        )
+    
     service = get_gmail_service()
     
     try:
         message_data = service.get_message(message_id, format='full')
+        message_detail = _parse_message_to_detail(message_data, service)
         
-        gmail_logger.info(
-            action="get_message",
-            status="success",
-            message=f"Retrieved message {message_id}",
-            message_id=message_id
-        )
+        # Redact body if user doesn't have permission to read it
+        if not permissions.gmail_read_body:
+            message_detail.plain_text_body = None
+            message_detail.html_body = None
+            
+            gmail_logger.info(
+                action="get_message",
+                status="success_redacted",
+                message=f"Retrieved message {message_id} (body redacted)",
+                message_id=message_id,
+                role=x_user_role or "none"
+            )
+        else:
+            gmail_logger.info(
+                action="get_message",
+                status="success",
+                message=f"Retrieved message {message_id}",
+                message_id=message_id,
+                role=x_user_role or "none"
+            )
         
-        return _parse_message_to_detail(message_data, service)
+        return message_detail
     
     except Exception as e:
         if "404" in str(e) or "not found" in str(e).lower():
@@ -337,7 +384,8 @@ def list_threads(
     q: Optional[str] = Query(None, description="Gmail search query"),
     label: Optional[str] = Query(None, description="Filter by label ID"),
     page_token: Optional[str] = Query(None, description="Token for pagination"),
-    page_size: int = Query(50, ge=1, le=100, description="Number of threads per page (max 100)")
+    page_size: int = Query(50, ge=1, le=100, description="Number of threads per page (max 100)"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
 ):
     """
     List email threads (conversations) from Gmail.
@@ -361,6 +409,20 @@ def list_threads(
     - Get inbox threads: `?label=INBOX`
     - Search in threads: `?q=important project`
     """
+    # Check permissions
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="list_threads",
+            status="forbidden",
+            message="Access denied: User does not have permission to read Gmail metadata",
+            role=x_user_role or "none"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read Gmail threads"
+        )
+    
     service = get_gmail_service()
     
     label_ids = [label] if label else None
@@ -411,7 +473,8 @@ def list_threads(
     description="Retrieves complete details of a specific email thread including all messages."
 )
 def get_thread(
-    thread_id: str
+    thread_id: str,
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
 ):
     """
     Get detailed information about a specific email thread.
@@ -430,6 +493,21 @@ def get_thread(
     - Each message includes basic information (subject, from, to, snippet, etc.)
     - For full message details including body, use the GET /messages/{id} endpoint
     """
+    # Check permissions
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="get_thread",
+            status="forbidden",
+            message=f"Access denied: User does not have permission to read Gmail metadata for thread {thread_id}",
+            role=x_user_role or "none",
+            thread_id=thread_id
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read Gmail threads"
+        )
+    
     service = get_gmail_service()
     
     try:
