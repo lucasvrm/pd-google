@@ -1,6 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import drive, webhooks, calendar, drive_items_adapter, gmail, health, crm_communication
+from routers import (
+    drive,
+    webhooks,
+    calendar,
+    drive_items_adapter,
+    gmail,
+    health,
+    crm_communication,
+    tasks,
+)
 from database import engine
 import models
 from services.scheduler_service import scheduler_service
@@ -65,6 +74,7 @@ app.include_router(calendar.router, prefix="/api/calendar")
 app.include_router(drive_items_adapter.router, prefix="/api/drive")
 app.include_router(gmail.router, prefix="/api/gmail")
 app.include_router(crm_communication.router, prefix="/api")
+app.include_router(tasks.router)
 app.include_router(health.router)
 
 @app.get("/")
