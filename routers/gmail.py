@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from services.google_gmail_service import GoogleGmailService
+from utils.structured_logging import StructuredLogger
 from schemas.gmail import (
     MessageSummary,
     MessageDetail,
@@ -19,6 +20,9 @@ from schemas.gmail import (
     LabelListResponse,
     Attachment
 )
+
+# Create Gmail-specific structured logger
+gmail_logger = StructuredLogger(service="gmail", logger_name="pipedesk_drive.gmail")
 
 router = APIRouter(
     tags=["gmail"]
@@ -238,6 +242,15 @@ def list_messages(
             msg_data = service.get_message(msg_ref['id'], format='full')
             messages.append(_parse_message_to_summary(msg_data, service))
         
+        gmail_logger.info(
+            action="list_messages",
+            status="success",
+            message=f"Listed {len(messages)} messages",
+            result_count=len(messages),
+            page_size=page_size,
+            has_next_page=bool(result.get('nextPageToken'))
+        )
+        
         return MessageListResponse(
             messages=messages,
             next_page_token=result.get('nextPageToken'),
@@ -245,6 +258,11 @@ def list_messages(
         )
     
     except Exception as e:
+        gmail_logger.error(
+            action="list_messages",
+            message="Failed to list messages",
+            error=e
+        )
         raise HTTPException(status_code=500, detail=f"Failed to list messages: {str(e)}")
 
 
@@ -280,11 +298,32 @@ def get_message(
     
     try:
         message_data = service.get_message(message_id, format='full')
+        
+        gmail_logger.info(
+            action="get_message",
+            status="success",
+            message=f"Retrieved message {message_id}",
+            message_id=message_id
+        )
+        
         return _parse_message_to_detail(message_data, service)
     
     except Exception as e:
         if "404" in str(e) or "not found" in str(e).lower():
+            gmail_logger.warning(
+                action="get_message",
+                status="not_found",
+                message=f"Message {message_id} not found",
+                message_id=message_id
+            )
             raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
+        
+        gmail_logger.error(
+            action="get_message",
+            message=f"Failed to get message {message_id}",
+            error=e,
+            message_id=message_id
+        )
         raise HTTPException(status_code=500, detail=f"Failed to get message: {str(e)}")
 
 
@@ -341,6 +380,15 @@ def list_threads(
             thread_data = service.get_thread(thread_ref['id'], format='metadata')
             threads.append(_parse_thread_to_summary(thread_data, service))
         
+        gmail_logger.info(
+            action="list_threads",
+            status="success",
+            message=f"Listed {len(threads)} threads",
+            result_count=len(threads),
+            page_size=page_size,
+            has_next_page=bool(result.get('nextPageToken'))
+        )
+        
         return ThreadListResponse(
             threads=threads,
             next_page_token=result.get('nextPageToken'),
@@ -348,6 +396,11 @@ def list_threads(
         )
     
     except Exception as e:
+        gmail_logger.error(
+            action="list_threads",
+            message="Failed to list threads",
+            error=e
+        )
         raise HTTPException(status_code=500, detail=f"Failed to list threads: {str(e)}")
 
 
@@ -387,6 +440,14 @@ def get_thread(
         for msg in thread_data.get('messages', []):
             messages.append(_parse_message_to_summary(msg, service))
         
+        gmail_logger.info(
+            action="get_thread",
+            status="success",
+            message=f"Retrieved thread {thread_id}",
+            thread_id=thread_id,
+            message_count=len(messages)
+        )
+        
         return ThreadDetail(
             id=thread_data.get('id', ''),
             messages=messages,
@@ -395,7 +456,20 @@ def get_thread(
     
     except Exception as e:
         if "404" in str(e) or "not found" in str(e).lower():
+            gmail_logger.warning(
+                action="get_thread",
+                status="not_found",
+                message=f"Thread {thread_id} not found",
+                thread_id=thread_id
+            )
             raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+        
+        gmail_logger.error(
+            action="get_thread",
+            message=f"Failed to get thread {thread_id}",
+            error=e,
+            thread_id=thread_id
+        )
         raise HTTPException(status_code=500, detail=f"Failed to get thread: {str(e)}")
 
 
@@ -442,7 +516,19 @@ def list_labels():
                 label_list_visibility=label_data.get('labelListVisibility')
             ))
         
+        gmail_logger.info(
+            action="list_labels",
+            status="success",
+            message=f"Listed {len(labels)} labels",
+            label_count=len(labels)
+        )
+        
         return LabelListResponse(labels=labels)
     
     except Exception as e:
+        gmail_logger.error(
+            action="list_labels",
+            message="Failed to list labels",
+            error=e
+        )
         raise HTTPException(status_code=500, detail=f"Failed to list labels: {str(e)}")

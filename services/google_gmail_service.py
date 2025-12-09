@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional, Tuple
 from services.google_auth import GoogleAuthService
+from utils.retry import exponential_backoff_retry
 import base64
 import re
 from email.utils import parsedate_to_datetime
@@ -21,6 +22,7 @@ class GoogleGmailService:
         if not self.service:
             raise Exception("Gmail Service configuration error: GOOGLE_SERVICE_ACCOUNT_JSON is missing or invalid.")
     
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def list_messages(
         self,
         user_id: str = 'me',
@@ -56,11 +58,9 @@ class GoogleGmailService:
         if page_token:
             kwargs['pageToken'] = page_token
         
-        try:
-            return self.service.users().messages().list(**kwargs).execute()
-        except Exception as e:
-            raise Exception(f"Failed to list messages: {str(e)}")
+        return self.service.users().messages().list(**kwargs).execute()
     
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def get_message(
         self,
         message_id: str,
@@ -80,15 +80,13 @@ class GoogleGmailService:
         """
         self._check_auth()
         
-        try:
-            return self.service.users().messages().get(
-                userId=user_id,
-                id=message_id,
-                format=format
-            ).execute()
-        except Exception as e:
-            raise Exception(f"Failed to get message {message_id}: {str(e)}")
+        return self.service.users().messages().get(
+            userId=user_id,
+            id=message_id,
+            format=format
+        ).execute()
     
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def list_threads(
         self,
         user_id: str = 'me',
@@ -124,11 +122,9 @@ class GoogleGmailService:
         if page_token:
             kwargs['pageToken'] = page_token
         
-        try:
-            return self.service.users().threads().list(**kwargs).execute()
-        except Exception as e:
-            raise Exception(f"Failed to list threads: {str(e)}")
+        return self.service.users().threads().list(**kwargs).execute()
     
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def get_thread(
         self,
         thread_id: str,
@@ -148,15 +144,13 @@ class GoogleGmailService:
         """
         self._check_auth()
         
-        try:
-            return self.service.users().threads().get(
-                userId=user_id,
-                id=thread_id,
-                format=format
-            ).execute()
-        except Exception as e:
-            raise Exception(f"Failed to get thread {thread_id}: {str(e)}")
+        return self.service.users().threads().get(
+            userId=user_id,
+            id=thread_id,
+            format=format
+        ).execute()
     
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
     def list_labels(
         self,
         user_id: str = 'me'
@@ -172,10 +166,7 @@ class GoogleGmailService:
         """
         self._check_auth()
         
-        try:
-            return self.service.users().labels().list(userId=user_id).execute()
-        except Exception as e:
-            raise Exception(f"Failed to list labels: {str(e)}")
+        return self.service.users().labels().list(userId=user_id).execute()
     
     # Helper methods for parsing Gmail API responses
     
