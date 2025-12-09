@@ -995,7 +995,11 @@ python seed_db.py
 
 - **Logs em tempo real:** Disponíveis na aba "Logs" do dashboard
 - **Métricas:** CPU, memória e latência disponíveis na aba "Metrics"
-- **Health checks:** Configure endpoint `/health` se necessário
+- **Health checks:** A aplicação fornece endpoints de health check em:
+  - `/health` - Status geral do sistema (agregando Calendar e Gmail)
+  - `/health/calendar` - Status do serviço Calendar
+  - `/health/gmail` - Status do serviço Gmail
+  - Veja [docs/HEALTH_API.md](./docs/HEALTH_API.md) para detalhes completos
 
 ### Docker (Futuro)
 
@@ -1020,6 +1024,44 @@ CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0
 - ⚠️ `PORT` - (Automático) Porta fornecida pelo Render (geralmente já configurada)
 - ✅ `WEBHOOK_BASE_URL` - URL pública base para webhooks (ex: `https://pipedesk-drive-backend.onrender.com`)
 - ⚠️ `WEBHOOK_SECRET` - (Opcional) Token secreto para validação de webhooks
+
+## 🏥 Health Check API
+
+A aplicação fornece endpoints de monitoramento de saúde para verificar o status dos serviços Google integrados (Calendar e Gmail).
+
+### Endpoints Disponíveis
+
+- **GET `/health`** - Status geral do sistema agregando todos os serviços
+- **GET `/health/calendar`** - Status do serviço Calendar (webhooks, sync, eventos)
+- **GET `/health/gmail`** - Status do serviço Gmail (autenticação, API)
+
+### Status de Retorno
+
+- `healthy` - Serviço totalmente operacional
+- `degraded` - Serviço operacional mas com problemas (ex: sem webhooks ativos)
+- `unhealthy` - Serviço não operacional (ex: credenciais ausentes)
+
+### Exemplo de Uso
+
+```bash
+# Status geral
+curl http://localhost:8000/health
+
+# Status do Gmail
+curl http://localhost:8000/health/gmail
+
+# Status do Calendar
+curl http://localhost:8000/health/calendar
+```
+
+### Integração com Monitoramento
+
+Os endpoints são projetados para uso em:
+- Load balancers (AWS ALB, Google Cloud LB)
+- Sistemas de monitoramento (Prometheus, Datadog, Nagios)
+- Kubernetes liveness/readiness probes
+
+Para documentação completa, veja [docs/HEALTH_API.md](./docs/HEALTH_API.md)
 
 ## 🔔 Webhooks do Google Drive
 
@@ -1303,6 +1345,7 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 - [x] **Sistema de Cache** - Redis para reduzir chamadas à API do Drive ✅
 - [x] **Soft Delete** - Marcar pastas/arquivos como deletados sem remover ✅
 - [x] **Busca Avançada** - Buscar arquivos por nome, tipo, data, entidade com paginação ✅
+- [x] **Health Check Endpoints** - Monitoramento de Calendar e Gmail ✅
 
 #### Média Prioridade
 - [ ] **Versionamento de Arquivos** - Controle de versões de documentos
@@ -1341,9 +1384,9 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 - [ ] CDN para arquivos estáticos (se houver)
 
 #### DevOps
-- [ ] Health check endpoint (`/health`)
+- [x] **Health check endpoint** - Endpoints `/health`, `/health/calendar` e `/health/gmail` ✅
 - [ ] Readiness check para K8s
-- [ ] Logs estruturados (JSON)
+- [x] **Logs estruturados (JSON)** - Implementado via utils/structured_logging.py ✅
 - [ ] Tracing distribuído (OpenTelemetry)
 
 ### Bugs Conhecidos
