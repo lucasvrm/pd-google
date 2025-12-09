@@ -163,8 +163,11 @@ def test_sales_view_endpoint_returns_ordered_leads():
     assert first["id"] == "lead-hot"
     assert first["priority_bucket"] == "hot"
     assert "VIP" in first["tags"]
+    assert first["next_action"]["code"] == "qualify_to_company"
+    assert "Engajamento alto" in first["next_action"]["reason"]
     assert body["items"][1]["priority_bucket"] in {"warm", "cold"}
     assert body["items"][1]["owner"]["name"] == "Alice Seller"
+    assert body["items"][1]["next_action"]["code"] == "send_follow_up"
 
     assert any(
         route.path == "/api/leads/sales-view" and "GET" in route.methods
