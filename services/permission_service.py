@@ -164,6 +164,8 @@ class PermissionService:
             return CalendarPermissions(calendar_read_details=True)
         
         # Manager, analyst, and new_business have full access
+        # Note: Both "new_business" and "newbusiness" variants are supported
+        # to handle different naming conventions in client applications
         if role_normalized in ("manager", "analyst", "new_business", "newbusiness"):
             return CalendarPermissions(calendar_read_details=True)
         
@@ -208,6 +210,8 @@ class PermissionService:
             return CRMPermissions(crm_read_communications=True)
         
         # Manager, analyst, and new_business have full access
+        # Note: Both "new_business" and "newbusiness" variants are supported
+        # to handle different naming conventions in client applications
         if role_normalized in ("manager", "analyst", "new_business", "newbusiness"):
             return CRMPermissions(crm_read_communications=True)
         

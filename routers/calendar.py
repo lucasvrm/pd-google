@@ -138,30 +138,6 @@ class EventResponse(BaseModel):
         }
 
 # Helper functions
-def redact_calendar_event_details(event_response: EventResponse, has_details_permission: bool) -> EventResponse:
-    """
-    Redact sensitive calendar event fields based on permissions.
-    
-    If user doesn't have calendar_read_details permission, the following fields are redacted:
-    - description: Set to None
-    - attendees: Set to empty list
-    - meet_link: Set to None
-    
-    Args:
-        event_response: The event response to potentially redact
-        has_details_permission: Whether user has permission to read event details
-        
-    Returns:
-        EventResponse with potentially redacted fields
-    """
-    if not has_details_permission:
-        event_response.description = None
-        event_response.attendees = []
-        event_response.meet_link = None
-    
-    return event_response
-
-
 def parse_attendees_from_google(attendees_data: Optional[List[dict]]) -> List[Attendee]:
     """
     Parse attendees from Google Calendar API format to Pydantic models.

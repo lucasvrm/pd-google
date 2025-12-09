@@ -301,10 +301,8 @@ def get_entity_emails(
                     except (ValueError, TypeError):
                         pass
                 
-                # Use snippet for summary if user doesn't have read_body permission
-                # This ensures we respect Gmail permission restrictions in CRM layer
-                snippet = msg_data.get('snippet')
-                
+                # EmailSummaryForCRM uses snippet (which doesn't contain full email body)
+                # This respects Gmail permission restrictions at the CRM layer
                 emails.append(EmailSummaryForCRM(
                     id=msg_data.get('id', ''),
                     thread_id=msg_data.get('threadId', ''),
@@ -312,7 +310,7 @@ def get_entity_emails(
                     from_email=headers.get('from'),
                     to_email=headers.get('to'),
                     cc_email=headers.get('cc'),
-                    snippet=snippet,  # Always use snippet (doesn't contain full body)
+                    snippet=msg_data.get('snippet'),
                     internal_date=internal_date,
                     has_attachments=has_attachments,
                     matched_contacts=matched_contacts
