@@ -470,3 +470,29 @@ def test_permission_service_all_roles():
         perms = PermissionService.get_permissions_for_role(role)
         assert perms.gmail_read_metadata is True, f"Role {role} should have metadata access"
         assert perms.gmail_read_body is False, f"Role {role} should NOT have body access"
+
+
+def test_admin_can_list_labels():
+    """Test that admin role can list labels"""
+    response = client.get("/api/gmail/labels", headers={"x-user-role": "admin"})
+    assert response.status_code == 200
+    data = response.json()
+    assert 'labels' in data
+    assert len(data['labels']) > 0
+
+
+def test_client_can_list_labels():
+    """Test that client role can list labels"""
+    response = client.get("/api/gmail/labels", headers={"x-user-role": "client"})
+    assert response.status_code == 200
+    data = response.json()
+    assert 'labels' in data
+    assert len(data['labels']) > 0
+
+
+def test_list_threads_with_role():
+    """Test that list_threads includes role in logs"""
+    response = client.get("/api/gmail/threads", headers={"x-user-role": "manager"})
+    assert response.status_code == 200
+    data = response.json()
+    assert 'threads' in data

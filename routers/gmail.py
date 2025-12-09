@@ -523,7 +523,8 @@ def get_thread(
             status="success",
             message=f"Retrieved thread {thread_id}",
             thread_id=thread_id,
-            message_count=len(messages)
+            message_count=len(messages),
+            role=x_user_role or "none"
         )
         
         return ThreadDetail(
@@ -557,7 +558,9 @@ def get_thread(
     summary="List Gmail Labels",
     description="Retrieves all labels from the user's Gmail account including system and custom labels."
 )
-def list_labels():
+def list_labels(
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+):
     """
     List all Gmail labels.
     
@@ -579,6 +582,20 @@ def list_labels():
     - System label IDs are uppercase (e.g., 'INBOX')
     - User label IDs are alphanumeric strings
     """
+    # Check permissions
+    permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not permissions.gmail_read_metadata:
+        gmail_logger.warning(
+            action="list_labels",
+            status="forbidden",
+            message="Access denied: User does not have permission to read Gmail metadata",
+            role=x_user_role or "none"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read Gmail labels"
+        )
+    
     service = get_gmail_service()
     
     try:
@@ -598,7 +615,8 @@ def list_labels():
             action="list_labels",
             status="success",
             message=f"Listed {len(labels)} labels",
-            label_count=len(labels)
+            label_count=len(labels),
+            role=x_user_role or "none"
         )
         
         return LabelListResponse(labels=labels)
