@@ -9,6 +9,7 @@ from routers import (
     health,
     crm_communication,
     tasks,
+    leads,
 )
 from database import engine
 import models
@@ -76,6 +77,7 @@ app.include_router(gmail.router, prefix="/api/gmail")
 app.include_router(crm_communication.router, prefix="/api")
 app.include_router(tasks.router)
 app.include_router(health.router)
+app.include_router(leads.router)
 
 @app.get("/")
 def read_root():
