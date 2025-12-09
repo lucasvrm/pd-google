@@ -143,7 +143,8 @@ class PermissionService:
         - manager/analyst: Full access (can see description, attendees, meet_link)
         - new_business: Full access (can see description, attendees, meet_link)
         - client/customer: Limited access (cannot see description, attendees, meet_link)
-        - default/unknown: Limited access (cannot see description, attendees, meet_link)
+        - None/empty (backward compatibility): Full access (can see description, attendees, meet_link)
+        - unknown: Limited access (cannot see description, attendees, meet_link)
         
         Args:
             role: User role from x-user-role header
@@ -152,8 +153,9 @@ class PermissionService:
             CalendarPermissions object with permission flags
         """
         if not role:
-            # No role provided - apply least privilege
-            return CalendarPermissions(calendar_read_details=False)
+            # No role provided - for backward compatibility, grant full access
+            # This maintains existing behavior for clients not sending role headers
+            return CalendarPermissions(calendar_read_details=True)
         
         role_normalized = role.strip().lower()
         
@@ -185,7 +187,8 @@ class PermissionService:
         - manager/analyst: Full access (can access CRM emails and events)
         - new_business: Full access (can access CRM emails and events)
         - client/customer: No access (403 on CRM communication endpoints)
-        - default/unknown: No access (403 on CRM communication endpoints)
+        - None/empty (backward compatibility): Full access (can access CRM emails and events)
+        - unknown: No access (403 on CRM communication endpoints)
         
         Args:
             role: User role from x-user-role header
@@ -194,8 +197,9 @@ class PermissionService:
             CRMPermissions object with permission flags
         """
         if not role:
-            # No role provided - apply least privilege
-            return CRMPermissions(crm_read_communications=False)
+            # No role provided - for backward compatibility, grant full access
+            # This maintains existing behavior for clients not sending role headers
+            return CRMPermissions(crm_read_communications=True)
         
         role_normalized = role.strip().lower()
         

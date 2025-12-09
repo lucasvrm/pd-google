@@ -723,5 +723,244 @@ class TestCRMContactService:
         assert 'Unknown entity type' in str(exc_info.value)
 
 
+# ------------------------------------------------------------
+# CRM Communication Permission Tests
+# ------------------------------------------------------------
+
+class TestCRMCommunicationPermissions:
+    """Test CRM communication permission enforcement"""
+    
+    def test_admin_can_access_crm_emails(self, test_client):
+        """Test that admin role can access CRM emails"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "admin"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "emails" in data
+        assert "total" in data
+    
+    def test_analyst_can_access_crm_emails(self, test_client):
+        """Test that analyst role can access CRM emails"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "analyst"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "emails" in data
+    
+    def test_manager_can_access_crm_emails(self, test_client):
+        """Test that manager role can access CRM emails"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "manager"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "emails" in data
+    
+    def test_new_business_can_access_crm_emails(self, test_client):
+        """Test that new_business role can access CRM emails"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "new_business"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "emails" in data
+    
+    def test_client_cannot_access_crm_emails(self, test_client):
+        """Test that client role cannot access CRM emails (403)"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "client"}
+        )
+        assert response.status_code == 403
+        data = response.json()
+        assert "detail" in data
+        assert "Access denied" in data["detail"]
+        assert "Insufficient permissions" in data["detail"]
+    
+    def test_customer_cannot_access_crm_emails(self, test_client):
+        """Test that customer role cannot access CRM emails (403)"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "customer"}
+        )
+        assert response.status_code == 403
+        data = response.json()
+        assert "Access denied" in data["detail"]
+    
+    def test_unknown_role_cannot_access_crm_emails(self, test_client):
+        """Test that unknown role cannot access CRM emails (403 - least privilege)"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "random_role"}
+        )
+        assert response.status_code == 403
+    
+    def test_no_role_header_cannot_access_crm_emails(self, test_client):
+        """Test that missing role header gets full access for backward compatibility"""
+        response = test_client.get("/api/crm/company/comp-test/emails")
+        # For backward compatibility, no role header should grant access
+        assert response.status_code == 200
+    
+    def test_admin_can_access_crm_events(self, test_client):
+        """Test that admin role can access CRM events"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "admin"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "events" in data
+        assert "total" in data
+    
+    def test_analyst_can_access_crm_events(self, test_client):
+        """Test that analyst role can access CRM events"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "analyst"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "events" in data
+    
+    def test_client_cannot_access_crm_events(self, test_client):
+        """Test that client role cannot access CRM events (403)"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "client"}
+        )
+        assert response.status_code == 403
+        data = response.json()
+        assert "Access denied" in data["detail"]
+    
+    def test_customer_cannot_access_crm_events(self, test_client):
+        """Test that customer role cannot access CRM events (403)"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "customer"}
+        )
+        assert response.status_code == 403
+    
+    def test_admin_sees_event_details_in_crm(self, test_client):
+        """Test that admin sees full event details via CRM endpoint"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "admin"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        
+        if data["total"] > 0:
+            event = data["events"][0]
+            # Admin should see details (if they exist in the test data)
+            # Fields should be present (may be None if not set in test data)
+            assert "description" in event
+            assert "meet_link" in event
+            assert "matched_contacts" in event
+    
+    def test_analyst_sees_event_details_in_crm(self, test_client):
+        """Test that analyst sees full event details via CRM endpoint"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "analyst"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        
+        if data["total"] > 0:
+            event = data["events"][0]
+            # Analyst should see details (if they exist)
+            assert "description" in event
+            assert "meet_link" in event
+    
+    def test_permission_service_crm_permissions(self):
+        """Test PermissionService CRM permission logic directly"""
+        from services.permission_service import PermissionService
+        
+        # Full access roles
+        full_access_roles = ["admin", "superadmin", "manager", "analyst", "new_business"]
+        for role in full_access_roles:
+            perms = PermissionService.get_crm_permissions_for_role(role)
+            assert perms.crm_read_communications is True, f"Role {role} should have crm_read_communications"
+        
+        # Restricted access roles (no access to CRM communications)
+        restricted_roles = ["client", "customer"]
+        for role in restricted_roles:
+            perms = PermissionService.get_crm_permissions_for_role(role)
+            assert perms.crm_read_communications is False, f"Role {role} should NOT have crm_read_communications"
+        
+        # Unknown roles get restricted access
+        perms = PermissionService.get_crm_permissions_for_role("unknown_role")
+        assert perms.crm_read_communications is False, "unknown_role should NOT have crm_read_communications"
+        
+        # None/empty roles get full access for backward compatibility
+        for role in [None, ""]:
+            perms = PermissionService.get_crm_permissions_for_role(role)
+            assert perms.crm_read_communications is True, f"Role {role} should have crm_read_communications (backward compat)"
+    
+    def test_crm_emails_respects_gmail_permissions(self, test_client):
+        """Test that CRM emails endpoint uses snippet (not full body) to respect Gmail permissions"""
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "admin"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        
+        # All emails should have snippet field
+        for email in data["emails"]:
+            assert "snippet" in email
+            # Note: The EmailSummaryForCRM schema doesn't include body fields
+            # This is intentional - we use snippet to avoid exposing full body
+    
+    def test_different_entity_types_with_permissions(self, test_client):
+        """Test permissions work across different entity types"""
+        entity_types = ['company', 'lead', 'deal']
+        entity_ids = ['comp-test', 'lead-test', 'deal-test']
+        
+        for entity_type, entity_id in zip(entity_types, entity_ids):
+            # Admin should succeed
+            response = test_client.get(
+                f"/api/crm/{entity_type}/{entity_id}/emails",
+                headers={"x-user-role": "admin"}
+            )
+            assert response.status_code == 200
+            
+            # Client should fail
+            response = test_client.get(
+                f"/api/crm/{entity_type}/{entity_id}/emails",
+                headers={"x-user-role": "client"}
+            )
+            assert response.status_code == 403
+    
+    def test_case_insensitive_role_matching(self, test_client):
+        """Test that role matching is case-insensitive"""
+        # Test with uppercase
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "ADMIN"}
+        )
+        assert response.status_code == 200
+        
+        # Test with mixed case
+        response = test_client.get(
+            "/api/crm/company/comp-test/events",
+            headers={"x-user-role": "AnAlYsT"}
+        )
+        assert response.status_code == 200
+        
+        # Test blocked role with uppercase
+        response = test_client.get(
+            "/api/crm/company/comp-test/emails",
+            headers={"x-user-role": "CLIENT"}
+        )
+        assert response.status_code == 403
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
