@@ -6,7 +6,7 @@ associated with CRM entities (Company/Lead/Deal).
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Tuple
 from datetime import datetime
 import json
 
@@ -119,7 +119,7 @@ def email_contains_contacts(
     cc_email: Optional[str],
     bcc_email: Optional[str],
     contact_emails: List[str]
-) -> tuple[bool, List[str]]:
+) -> Tuple[bool, List[str]]:
     """
     Check if any contact emails appear in the email's from/to/cc/bcc fields.
     Returns (matches_found, list_of_matched_contacts).
