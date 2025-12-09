@@ -4,7 +4,7 @@ These schemas define aggregated email and event data associated with CRM entitie
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime
 
 
@@ -134,6 +134,84 @@ class EventListForCRMResponse(BaseModel):
                     }
                 ],
                 "total": 12,
+                "limit": 50,
+                "offset": 0
+            }
+        }
+
+
+class TimelineItem(BaseModel):
+    """
+    Unified timeline item representing either an email or calendar event.
+    Used to display a chronological view of all communications with a CRM entity.
+    """
+    id: str = Field(description="Unique identifier (Gmail message ID or Calendar event ID)")
+    source: Literal["gmail", "calendar"] = Field(description="Source of this timeline item")
+    item_type: Literal["email", "event"] = Field(description="Type of communication", serialization_alias="type")
+    subject: str = Field(description="Email subject or event summary")
+    snippet: Optional[str] = Field(None, description="Preview text for emails or event description")
+    item_datetime: datetime = Field(description="Date/time of the communication (email date or event start)", serialization_alias="datetime")
+    participants: List[str] = Field(default_factory=list, description="Email addresses involved")
+    matched_contacts: List[str] = Field(default_factory=list, description="Entity contact emails that matched")
+    entity_type: str = Field(description="Type of CRM entity (company, lead, deal)")
+    entity_id: str = Field(description="ID of the CRM entity")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "18b2f3a8d4c5e1f2",
+                "source": "gmail",
+                "type": "email",
+                "subject": "Q4 Sales Discussion",
+                "snippet": "Following up on our previous conversation about Q4 targets...",
+                "datetime": "2024-01-15T14:30:00Z",
+                "participants": ["client@company.com", "sales@ourcompany.com"],
+                "matched_contacts": ["client@company.com"],
+                "entity_type": "company",
+                "entity_id": "comp-123"
+            }
+        }
+
+
+class TimelineResponse(BaseModel):
+    """
+    Response for unified timeline of emails and events for a CRM entity.
+    """
+    items: List[TimelineItem]
+    total: int = Field(description="Total number of timeline items")
+    limit: int
+    offset: int
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "items": [
+                    {
+                        "id": "evt_abc123",
+                        "source": "calendar",
+                        "type": "event",
+                        "subject": "Client Meeting - Q4 Review",
+                        "snippet": "Quarterly review meeting with client",
+                        "datetime": "2024-01-16T14:00:00+00:00",
+                        "participants": ["client@company.com", "sales@ourcompany.com"],
+                        "matched_contacts": ["client@company.com"],
+                        "entity_type": "company",
+                        "entity_id": "comp-123"
+                    },
+                    {
+                        "id": "18b2f3a8d4c5e1f2",
+                        "source": "gmail",
+                        "type": "email",
+                        "subject": "Q4 Sales Discussion",
+                        "snippet": "Following up on our previous conversation...",
+                        "datetime": "2024-01-15T14:30:00Z",
+                        "participants": ["client@company.com", "sales@ourcompany.com"],
+                        "matched_contacts": ["client@company.com"],
+                        "entity_type": "company",
+                        "entity_id": "comp-123"
+                    }
+                ],
+                "total": 37,
                 "limit": 50,
                 "offset": 0
             }
