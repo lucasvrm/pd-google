@@ -13,3 +13,4 @@ apscheduler
 PyJWT
 pytest
 pytest-asyncio
+email-validator
