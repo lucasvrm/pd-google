@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timedelta, timezone
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func
@@ -37,9 +37,20 @@ def get_db():
         db.close()
 
 
-def _normalize_datetime(value: datetime | None) -> datetime | None:
+def _normalize_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
+
+    if isinstance(value, str):
+        try:
+            # Try parsing ISO format
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    if not isinstance(value, datetime):
+        return None
+
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
@@ -180,31 +191,14 @@ def sales_view(
                     )
                 )
             except Exception as item_exc:
-                # Log error for specific lead but continue (or raise depending on severity)
-                # For sales view, one bad lead shouldn't kill the whole view?
-                # But requirement says "Corrigir completamente".
-                # Best to fail this item and log it, or propagate?
-                # User wants 200 OK.
-                # If we skip an item, pagination total count will be off (DB total vs Returned items).
-                # This might confuse frontend (total=10, data=9).
-                # But it's better than 500.
+                # Log error for specific lead but SKIPPING instead of RAISING
                 sales_view_logger.error(
                     action="sales_view_item_error",
-                    message=f"Failed to process lead {lead.id}",
+                    message=f"Failed to process lead {lead.id}. Skipping.",
                     error=item_exc,
                     exc_info=True
                 )
-                # We will re-raise to ensure we don't return mismatched pagination data
-                # Or we could construct a 'fallback' item?
-                raise item_exc
-
-        # We should NOT sort items again here if we rely on DB sorting for pagination.
-        # But if the requirement says "sort by priority" and priority calculation is complex/mixed,
-        # checking consistency is good.
-        # However, since we already fetched a page based on DB order, resorting this PAGE in memory
-        # based on potentially different logic is weird but acceptable if logic aligns.
-        # Re-sorting the *entire dataset* in memory is impossible with pagination.
-        # So we just sort the current page items to ensure local consistency.
+                continue # Skip this bad item to ensure 200 OK for the list
 
         items = sorted(
             items,
