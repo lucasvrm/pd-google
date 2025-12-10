@@ -124,55 +124,79 @@ def sales_view(
 
         items: List[LeadSalesViewItem] = []
         for lead in leads:
-            stats = lead.activity_stats
-            score = (
-                lead.priority_score
-                if lead.priority_score is not None
-                else calculate_lead_priority(lead, stats)
-            )
-            bucket = classify_priority_bucket(score)
-
-            last_interaction = (
-                stats.last_interaction_at
-                if stats and stats.last_interaction_at
-                else lead.updated_at or lead.created_at
-            )
-            last_interaction = _normalize_datetime(last_interaction)
-
-            items.append(
-                LeadSalesViewItem(
-                    id=lead.id,
-                    legal_name=getattr(lead, "legal_name", None) or lead.title,
-                    trade_name=lead.trade_name,
-                    status=lead.status,
-                    origin=lead.origin,
-                    owner=LeadOwner(id=lead.owner.id, name=lead.owner.name)
-                    if lead.owner
-                    else None,
-                    priority_score=score,
-                    priority_bucket=bucket,
-                    last_interaction_at=last_interaction,
-                    primary_contact=
-                    LeadContact(
-                        id=lead.primary_contact.id,
-                        name=lead.primary_contact.name,
-                        email=lead.primary_contact.email,
-                        phone=lead.primary_contact.phone,
-                    )
-                    if lead.primary_contact
-                    else None,
-                    tags=[tag.name for tag in lead.tags] if lead.tags else [],
-                    next_action=suggest_next_action(lead, stats),
+            try:
+                stats = lead.activity_stats
+                # Handle potential null priority_score in DB gracefully
+                db_score = lead.priority_score if lead.priority_score is not None else None
+                score = (
+                    db_score
+                    if db_score is not None
+                    else calculate_lead_priority(lead, stats)
                 )
-            )
+                bucket = classify_priority_bucket(score)
 
-        # We should NOT sort items again here if we rely on DB sorting for pagination.
-        # But if the requirement says "sort by priority" and priority calculation is complex/mixed,
-        # checking consistency is good.
-        # However, since we already fetched a page based on DB order, resorting this PAGE in memory
-        # based on potentially different logic is weird but acceptable if logic aligns.
-        # Re-sorting the *entire dataset* in memory is impossible with pagination.
-        # So we just sort the current page items to ensure local consistency.
+                last_interaction = (
+                    stats.last_interaction_at
+                    if stats and stats.last_interaction_at
+                    else lead.updated_at or lead.created_at
+                )
+                last_interaction = _normalize_datetime(last_interaction)
+
+                # Robust tag extraction: filter out None values and ensure string conversion
+                tags_list = []
+                if lead.tags:
+                    tags_list = [str(tag.name) for tag in lead.tags if tag.name is not None]
+
+                # Robust next action
+                next_action = suggest_next_action(lead, stats)
+
+                # Create LeadOwner only if ID is present or handle as Optional
+                lead_owner = None
+                if lead.owner:
+                    lead_owner = LeadOwner(id=lead.owner.id, name=lead.owner.name)
+
+                items.append(
+                    LeadSalesViewItem(
+                        id=str(lead.id), # Ensure ID is string
+                        legal_name=getattr(lead, "legal_name", None) or lead.title,
+                        trade_name=lead.trade_name,
+                        status=lead.status,
+                        origin=lead.origin,
+                        owner=lead_owner,
+                        priority_score=score,
+                        priority_bucket=bucket,
+                        last_interaction_at=last_interaction,
+                        primary_contact=
+                        LeadContact(
+                            id=lead.primary_contact.id,
+                            name=lead.primary_contact.name,
+                            email=lead.primary_contact.email,
+                            phone=lead.primary_contact.phone,
+                        )
+                        if lead.primary_contact
+                        else None,
+                        tags=tags_list,
+                        next_action=next_action,
+                    )
+                )
+            except Exception as item_exc:
+                # Log error for specific lead but continue (or raise depending on severity)
+                # For sales view, one bad lead shouldn't kill the whole view?
+                # But requirement says "Corrigir completamente".
+                # Best to fail this item and log it, or propagate?
+                # User wants 200 OK.
+                # If we skip an item, pagination total count will be off (DB total vs Returned items).
+                # This might confuse frontend (total=10, data=9).
+                # But it's better than 500.
+                sales_view_logger.error(
+                    action="sales_view_item_error",
+                    message=f"Failed to process lead {lead.id}",
+                    error=item_exc,
+                    exc_info=True
+                )
+                # We will re-raise to ensure we don't return mismatched pagination data
+                # Or we could construct a 'fallback' item?
+                raise item_exc
 
         items = sorted(
             items,
@@ -182,9 +206,6 @@ def sales_view(
                 -(item.last_interaction_at.timestamp()) if item.last_interaction_at else 0,
             ),
         )
-
-        # Removed the double pagination slice here.
-        # We already limited the query to `page_size` with offset `(page-1)*page_size`.
 
         success = True
         return LeadSalesViewResponse(
@@ -204,7 +225,7 @@ def sales_view(
             error=exc,
             exc_info=True
         )
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(exc)}")
     finally:
         duration = time.time() - started
         sales_view_metrics["total_latency"] += duration
