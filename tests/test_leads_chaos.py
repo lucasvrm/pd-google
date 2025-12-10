@@ -39,6 +39,13 @@ def test_sales_view_chaos():
         db.add(lead_minimal)
         db.commit()
 
+        # Trigger sales_view
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 1 survived")
+        except Exception as e:
+            pytest.fail(f"Chaos 1 failed: {e}")
+
         # Case 2: Lead with orphaned relationships or partial data
         lead_broken_fk = models.Lead(
             id="chaos-2",
@@ -49,6 +56,12 @@ def test_sales_view_chaos():
         db.add(lead_broken_fk)
         db.commit()
 
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 2 survived")
+        except Exception as e:
+            pytest.fail(f"Chaos 2 failed: {e}")
+
         # Case 3: Lead with Activity Stats but None values inside stats
         stats_empty = models.LeadActivityStats(
             lead_id="chaos-1",
@@ -56,6 +69,12 @@ def test_sales_view_chaos():
         )
         db.add(stats_empty)
         db.commit()
+
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 3 survived")
+        except Exception as e:
+            pytest.fail(f"Chaos 3 failed: {e}")
 
         # Case 4: Lead with weird priority score (None)
         lead_none_priority = models.Lead(
@@ -65,6 +84,12 @@ def test_sales_view_chaos():
         )
         db.add(lead_none_priority)
         db.commit()
+
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 4 survived")
+        except Exception as e:
+            pytest.fail(f"Chaos 4 failed: {e}")
 
         # Case 5: Lead with future/past extreme dates
         lead_dates = models.Lead(
@@ -80,6 +105,14 @@ def test_sales_view_chaos():
         # Case 6: Tag with None name
         # This lead SHOULD be skipped or handled gracefully (if handled)
         # But wait, my code SKIPS items that fail creation.
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 5 survived")
+        except Exception as e:
+            pytest.fail(f"Chaos 5 failed: {e}")
+
+        # Case 6: Tag with None name
+        # This is the hypothesis for Pydantic validation error
         lead_tag_issue = models.Lead(
             id="chaos-6",
             title="Chaos Tag"
@@ -88,6 +121,17 @@ def test_sales_view_chaos():
         db.add(lead_tag_issue)
         db.add(tag_none)
         db.commit()
+        tag_none = models.Tag(name=None, color="#000000") # name is unique, but SQLite allows one null?
+        # unique constraint might fail on second null, but one is fine.
+        # Actually models.py says unique=True. In SQL, multiple NULLs are allowed in unique columns usually.
+
+        db.add(lead_tag_issue)
+        db.add(tag_none)
+        db.commit()
+
+        # Link them
+        # We need to manually insert into lead_tags because we don't have a model class for it easily accessible
+        # (it's defined as a class LeadTag in models.py, let's use it)
         lead_tag_link = models.LeadTag(lead_id="chaos-6", tag_id=tag_none.id)
         db.add(lead_tag_link)
         db.commit()
@@ -125,6 +169,15 @@ def test_sales_view_chaos():
 
         except Exception as e:
             pytest.fail(f"Sales View Failed: {e}")
+        try:
+            result = leads.sales_view(page=1, page_size=10, db=db)
+            print("Chaos 6 survived")
+        except Exception as e:
+            print(f"Chaos 6 failed as expected? {e}")
+            # If this is the cause, we expect a failure here unless I already fixed it?
+            # I haven't fixed it yet.
+            # But wait, pytest.fail will stop the test. I want to assert failure or success.
+            pass
 
     finally:
         db.close()
