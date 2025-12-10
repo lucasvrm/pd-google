@@ -198,6 +198,14 @@ def sales_view(
                 # Or we could construct a 'fallback' item?
                 raise item_exc
 
+        # We should NOT sort items again here if we rely on DB sorting for pagination.
+        # But if the requirement says "sort by priority" and priority calculation is complex/mixed,
+        # checking consistency is good.
+        # However, since we already fetched a page based on DB order, resorting this PAGE in memory
+        # based on potentially different logic is weird but acceptable if logic aligns.
+        # Re-sorting the *entire dataset* in memory is impossible with pagination.
+        # So we just sort the current page items to ensure local consistency.
+
         items = sorted(
             items,
             key=lambda item: (
