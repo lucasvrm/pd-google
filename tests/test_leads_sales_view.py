@@ -152,12 +152,12 @@ def test_sales_view_endpoint_returns_ordered_leads():
 
     body = result.model_dump()
 
-    assert body["total"] == 4
-    assert body["page"] == 1
-    assert body["page_size"] == 10
-    assert len(body["items"]) == 4
+    # Updated assertions for new structure
+    assert body["pagination"]["total"] == 4
+    assert body["pagination"]["per_page"] == 10
+    assert len(body["data"]) == 4
 
-    first, second = body["items"][:2]
+    first, second = body["data"][:2]
 
     assert first["priority_score"] >= second["priority_score"]
     assert first["id"] == "lead-hot"
@@ -165,9 +165,9 @@ def test_sales_view_endpoint_returns_ordered_leads():
     assert "VIP" in first["tags"]
     assert first["next_action"]["code"] == "qualify_to_company"
     assert "Engajamento alto" in first["next_action"]["reason"]
-    assert body["items"][1]["priority_bucket"] in {"warm", "cold"}
-    assert body["items"][1]["owner"]["name"] == "Alice Seller"
-    assert body["items"][1]["next_action"]["code"] == "send_follow_up"
+    assert body["data"][1]["priority_bucket"] in {"warm", "cold"}
+    assert body["data"][1]["owner"]["name"] == "Alice Seller"
+    assert body["data"][1]["next_action"]["code"] == "send_follow_up"
 
     assert any(
         route.path == "/api/leads/sales-view" and "GET" in route.methods
@@ -189,12 +189,12 @@ def test_sales_view_filters_recent_and_priority():
         db.close()
 
     body = result.model_dump()
-    ids = [item["id"] for item in body["items"]]
+    ids = [item["id"] for item in body["data"]]
 
     assert "lead-hot" in ids
     assert "lead-recent" in ids
     assert "lead-cold" not in ids
-    assert all(item["priority_score"] >= 40 for item in body["items"])
+    assert all(item["priority_score"] >= 40 for item in body["data"])
 
 
 def test_sales_view_filter_by_owner_and_ordering():
@@ -211,5 +211,33 @@ def test_sales_view_filter_by_owner_and_ordering():
         db.close()
 
     body = result.model_dump()
-    assert body["total"] == 1
-    assert body["items"][0]["id"] == "lead-old"
+    assert body["pagination"]["total"] == 1
+    assert body["data"][0]["id"] == "lead-old"
+
+
+def test_sales_view_pagination_page_2():
+    db = TestingSessionLocal()
+    try:
+        # We have 4 items. page_size=2.
+        # Page 1 should have 2 items.
+        # Page 2 should have 2 items.
+
+        # Page 1
+        result1 = leads.sales_view(page=1, page_size=2, db=db)
+        body1 = result1.model_dump()
+        assert len(body1["data"]) == 2
+        assert body1["pagination"]["total"] == 4
+
+        # Page 2
+        result2 = leads.sales_view(page=2, page_size=2, db=db)
+        body2 = result2.model_dump()
+        assert len(body2["data"]) == 2
+        assert body2["pagination"]["total"] == 4
+
+        # Verify items are different
+        ids1 = {item["id"] for item in body1["data"]}
+        ids2 = {item["id"] for item in body2["data"]}
+        assert ids1.isdisjoint(ids2)
+
+    finally:
+        db.close()
