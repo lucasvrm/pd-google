@@ -2,7 +2,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -13,6 +13,7 @@ from schemas.leads import (
     LeadOwner,
     LeadSalesViewItem,
     LeadSalesViewResponse,
+    Pagination,
 )
 from services.lead_priority_service import (
     calculate_lead_priority,
@@ -59,6 +60,19 @@ def sales_view(
     started = time.time()
     sales_view_metrics["calls"] += 1
     success = False
+
+    # Log initial params
+    sales_view_logger.info(
+        action="sales_view",
+        message="Request parameters",
+        params={
+            "page": page,
+            "page_size": page_size,
+            "owner_id": owner_id,
+            "status": status,
+            "order_by": order_by
+        }
+    )
 
     try:
         base_query = (
@@ -152,6 +166,14 @@ def sales_view(
                 )
             )
 
+        # We should NOT sort items again here if we rely on DB sorting for pagination.
+        # But if the requirement says "sort by priority" and priority calculation is complex/mixed,
+        # checking consistency is good.
+        # However, since we already fetched a page based on DB order, resorting this PAGE in memory
+        # based on potentially different logic is weird but acceptable if logic aligns.
+        # Re-sorting the *entire dataset* in memory is impossible with pagination.
+        # So we just sort the current page items to ensure local consistency.
+
         items = sorted(
             items,
             key=lambda item: (
@@ -161,25 +183,28 @@ def sales_view(
             ),
         )
 
-        start = (page - 1) * page_size
-        end = start + page_size
-        paginated_items = items[start:end]
+        # Removed the double pagination slice here.
+        # We already limited the query to `page_size` with offset `(page-1)*page_size`.
 
         success = True
         return LeadSalesViewResponse(
-            items=paginated_items,
-            page=page,
-            page_size=page_size,
-            total=total,
+            data=items,
+            pagination=Pagination(
+                total=total,
+                per_page=page_size
+            )
         )
+    except HTTPException:
+        raise
     except Exception as exc:  # pragma: no cover - defensive logging path
         sales_view_metrics["errors"] += 1
         sales_view_logger.error(
             action="sales_view",
             message="Failed to build sales view",
             error=exc,
+            exc_info=True
         )
-        raise
+        raise HTTPException(status_code=500, detail="Internal Server Error")
     finally:
         duration = time.time() - started
         sales_view_metrics["total_latency"] += duration

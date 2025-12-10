@@ -37,8 +37,11 @@ class LeadSalesViewItem(BaseModel):
     next_action: NextAction
 
 
-class LeadSalesViewResponse(BaseModel):
-    items: List[LeadSalesViewItem]
-    page: int
-    page_size: int
+class Pagination(BaseModel):
     total: int
+    per_page: int
+
+
+class LeadSalesViewResponse(BaseModel):
+    data: List[LeadSalesViewItem]
+    pagination: Pagination
