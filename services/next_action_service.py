@@ -9,9 +9,20 @@ HIGH_ENGAGEMENT_SCORE = 70
 NEW_LEAD_MAX_AGE_DAYS = 14
 
 
-def _normalize_datetime(value: Optional[datetime]) -> Optional[datetime]:
+def _normalize_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
+
+    if isinstance(value, str):
+        try:
+            # Try parsing ISO format
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    if not isinstance(value, datetime):
+        return None
+
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
@@ -25,6 +36,7 @@ def suggest_next_action(lead: Any, stats: Any, now: Optional[datetime] = None) -
     )
 
     created_at = _normalize_datetime(getattr(lead, "created_at", None)) or current_time
+    # ensure created_at is not in the future relative to current_time to avoid negative days
     lead_age_days = max((current_time - created_at).days, 0)
 
     last_event_at = _normalize_datetime(getattr(stats, "last_event_at", None)) if stats else None
@@ -67,4 +79,3 @@ def suggest_next_action(lead: Any, stats: Any, now: Optional[datetime] = None) -
         "label": "Enviar follow-up",
         "reason": "Manter relacionamento ativo",
     }
-

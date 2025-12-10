@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -101,6 +102,9 @@ def test_sales_view_chaos():
         db.add(lead_dates)
         db.commit()
 
+        # Case 6: Tag with None name
+        # This lead SHOULD be skipped or handled gracefully (if handled)
+        # But wait, my code SKIPS items that fail creation.
         try:
             result = leads.sales_view(page=1, page_size=10, db=db)
             print("Chaos 5 survived")
@@ -113,6 +117,10 @@ def test_sales_view_chaos():
             id="chaos-6",
             title="Chaos Tag"
         )
+        tag_none = models.Tag(name=None, color="#000000")
+        db.add(lead_tag_issue)
+        db.add(tag_none)
+        db.commit()
         tag_none = models.Tag(name=None, color="#000000") # name is unique, but SQLite allows one null?
         # unique constraint might fail on second null, but one is fine.
         # Actually models.py says unique=True. In SQL, multiple NULLs are allowed in unique columns usually.
@@ -128,6 +136,39 @@ def test_sales_view_chaos():
         db.add(lead_tag_link)
         db.commit()
 
+        # Case 8: Lead with VALID STRING in datetime column (Legacy Data Simulation)
+        # SQLite allows inserting string into DateTime column. SQLAlchemy usually tries to parse it on read.
+        # But if we use raw SQL, we bypass write-time checks.
+        db.execute(text("INSERT INTO leads (id, legal_name, created_at) VALUES ('chaos-8', 'String Date Lead', '2023-01-01T10:00:00')"))
+        db.commit()
+
+        # EXECUTE
+        try:
+            result = leads.sales_view(page=1, page_size=20, db=db)
+            print("Sales View Executed Successfully")
+
+            # VERIFY
+            data = result.data
+            ids = [item.id for item in data]
+
+            print(f"Returned IDs: {ids}")
+
+            # Chaos 1, 2, 4, 5, 8 should exist.
+            # Chaos 6 (None tag) -> My code has try/except around item creation.
+            # If `LeadSalesViewItem` creation fails for Chaos 6, it is skipped.
+            # Does it fail?
+            # `tags_list = [str(tag.name) for tag in lead.tags if tag.name is not None]`
+            # I ADDED filtering for None tags! So Chaos 6 should SUCCEED now!
+
+            assert "chaos-1" in ids
+            assert "chaos-2" in ids
+            assert "chaos-4" in ids
+            assert "chaos-5" in ids
+            assert "chaos-6" in ids # Should exist because we fixed the tag issue
+            assert "chaos-8" in ids # Should exist because _normalize_datetime handles strings
+
+        except Exception as e:
+            pytest.fail(f"Sales View Failed: {e}")
         try:
             result = leads.sales_view(page=1, page_size=10, db=db)
             print("Chaos 6 survived")
