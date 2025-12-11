@@ -248,3 +248,175 @@ def sales_view(
                     else models.Lead.priority_score.asc()
                 )
                 base_query = base_query.order_by(order_expr)
+            elif order_field == "last_interaction":
+                if not order_desc:
+                    base_query = base_query.order_by(
+                        last_interaction_expr.desc().nullslast()
+                    )
+                else:
+                    base_query = base_query.order_by(
+                        last_interaction_expr.asc().nullsfirst()
+                    )
+            else:  # created_at
+                order_expr = (
+                    models.Lead.created_at.desc()
+                    if not order_desc
+                    else models.Lead.created_at.asc()
+                )
+                base_query = base_query.order_by(order_expr)
+
+            total = base_query.count()
+            leads: List[models.Lead] = (
+                base_query.offset((page - 1) * effective_page_size)
+                .limit(effective_page_size)
+                .all()
+            )
+
+        except (ProgrammingError, PsycopgError, Exception) as query_exc:
+            sales_view_logger.error(
+                action="sales_view_query_error",
+                status="error",
+                message="Failed to execute sales view query",
+                error_type=type(query_exc).__name__,
+                error=str(query_exc),
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "sales_view_error",
+                    "message": "Failed to build sales view",
+                },
+            )
+
+        items: List[LeadSalesViewItem] = []
+        for lead in leads:
+            try:
+                stats = lead.activity_stats
+                # Handle potential null priority_score in DB gracefully
+                db_score = (
+                    lead.priority_score if lead.priority_score is not None else None
+                )
+                score = (
+                    db_score
+                    if db_score is not None
+                    else calculate_lead_priority(lead, stats)
+                )
+                bucket = classify_priority_bucket(score)
+
+                last_interaction = (
+                    stats.last_interaction_at
+                    if stats and stats.last_interaction_at
+                    else lead.updated_at or lead.created_at
+                )
+                last_interaction = _normalize_datetime(last_interaction)
+
+                # Robust tag extraction: filter out None values and ensure string conversion
+                tags_list: List[str] = []
+                if lead.tags:
+                    tags_list = [
+                        str(tag.name) for tag in lead.tags if tag.name is not None
+                    ]
+
+                # Robust next action
+                next_action = suggest_next_action(lead, stats)
+
+                # Create LeadOwner only if ID is present or handle as Optional
+                lead_owner: Optional[LeadOwner] = None
+                if getattr(lead, "owner", None):
+                    lead_owner = LeadOwner(
+                        id=str(lead.owner.id) if lead.owner.id is not None else None,
+                        name=lead.owner.name,
+                    )
+
+                items.append(
+                    LeadSalesViewItem(
+                        id=str(lead.id),  # Ensure ID is string
+                        legal_name=getattr(lead, "legal_name", None) or lead.title,
+                        trade_name=lead.trade_name,
+                        lead_status_id=(
+                            str(lead.lead_status_id)
+                            if lead.lead_status_id is not None
+                            else None
+                        ),
+                        lead_origin_id=(
+                            str(lead.lead_origin_id)
+                            if lead.lead_origin_id is not None
+                            else None
+                        ),
+                        owner_user_id=(
+                            str(lead.owner_user_id)
+                            if lead.owner_user_id is not None
+                            else None
+                        ),
+                        owner=lead_owner,
+                        priority_score=score,
+                        priority_bucket=bucket,
+                        last_interaction_at=last_interaction,
+                        qualified_master_deal_id=(
+                            str(lead.qualified_master_deal_id)
+                            if lead.qualified_master_deal_id is not None
+                            else None
+                        ),
+                        address_city=lead.address_city,
+                        address_state=lead.address_state,
+                        tags=tags_list,
+                        next_action=next_action,
+                    )
+                )
+            except Exception as item_exc:
+                # Log error for specific lead but SKIPPING instead of RAISING
+                sales_view_logger.error(
+                    action="sales_view_item_error",
+                    message=f"Failed to process lead {lead.id}. Skipping.",
+                    error=item_exc,
+                    exc_info=True,
+                )
+                # Skip this bad item to ensure 200 OK for the list
+                continue
+
+        # Items are already ordered by the database query, no need to re-sort
+        success = True
+        return LeadSalesViewResponse(
+            data=items,
+            pagination=Pagination(
+                total=total,
+                per_page=effective_page_size,
+                page=page,
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        sales_view_metrics["errors"] += 1
+        sales_view_logger.error(
+            action="sales_view",
+            status="error",
+            message="Failed to build sales view",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "sales_view_error",
+                "message": "Failed to build sales view",
+            },
+        )
+    finally:
+        duration = time.time() - started
+        sales_view_metrics["total_latency"] += duration
+        avg_latency = (
+            sales_view_metrics["total_latency"]
+            / max(sales_view_metrics["calls"], 1)
+        )
+        sales_view_logger.info(
+            action="sales_view_metrics",
+            status="success" if success else "error",
+            message="Sales view request telemetry",
+            calls=sales_view_metrics["calls"],
+            errors=sales_view_metrics["errors"],
+            avg_latency_ms=round(avg_latency * 1000, 2),
+            last_request_ms=round(duration * 1000, 2),
+        )
