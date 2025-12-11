@@ -28,12 +28,11 @@ class DriveFolder(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(String, index=True)
-    entity_type = Column(String, index=True) # company, lead, deal, contact
-    folder_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
-    
-    # --- ADDED THIS LINE ---
-    folder_url = Column(String) 
-    # -----------------------
+    entity_type = Column(String, index=True)  # company, lead, deal, contact
+    folder_id = Column(String, unique=True, index=True)  # ID in Google Drive (Mocked)
+
+    # URL amigável da pasta no Drive
+    folder_url = Column(String)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # Soft delete fields
@@ -46,8 +45,8 @@ class DriveFile(Base):
     __tablename__ = "drive_files"
 
     id = Column(Integer, primary_key=True, index=True)
-    file_id = Column(String, unique=True, index=True) # ID in Google Drive (Mocked)
-    parent_folder_id = Column(String, index=True) # Folder ID in Drive
+    file_id = Column(String, unique=True, index=True)  # ID in Google Drive (Mocked)
+    parent_folder_id = Column(String, index=True)  # Folder ID in Drive
     name = Column(String)
     mime_type = Column(String)
     size = Column(Integer)
@@ -57,16 +56,18 @@ class DriveFile(Base):
     deleted_by = Column(String, nullable=True)  # user_id who deleted
     delete_reason = Column(String, nullable=True)
 
+
 # Template Structures
 class DriveStructureTemplate(Base):
     __tablename__ = "drive_structure_templates"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True)
-    entity_type = Column(String, index=True) # company, lead, deal, etc.
+    entity_type = Column(String, index=True)  # company, lead, deal, etc.
     active = Column(Boolean, default=True)
 
     nodes = relationship("DriveStructureNode", back_populates="template")
+
 
 class DriveStructureNode(Base):
     __tablename__ = "drive_structure_nodes"
@@ -74,28 +75,32 @@ class DriveStructureNode(Base):
     id = Column(Integer, primary_key=True, index=True)
     template_id = Column(Integer, ForeignKey("drive_structure_templates.id"))
     parent_id = Column(Integer, ForeignKey("drive_structure_nodes.id"), nullable=True)
-    name = Column(String) # Folder name, can contain placeholders like {{year}}
+    name = Column(String)  # Folder name, can contain placeholders like {{year}}
     order = Column(Integer, default=0)
 
     template = relationship("DriveStructureTemplate", back_populates="nodes")
+
 
 # Roles & Permissions (Simplified for MVP)
 class UserRole(Base):
     __tablename__ = "user_roles"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, index=True) # ID from Supabase Auth
-    role = Column(String) # admin, manager, sales
+    user_id = Column(String, index=True)  # ID from Supabase Auth
+    role = Column(String)  # admin, manager, sales
+
 
 # --- SUPABASE INTEGRATION MODELS ---
 # These models map to existing tables in the main application database (Supabase)
 # We define them here to allow SQLAlchemy to query them for names and relationships.
 
+
 class Company(Base):
     __tablename__ = "companies"
 
-    id = Column(String, primary_key=True) # UUID
-    name = Column(String) # Razão Social or Name
+    id = Column(String, primary_key=True)  # UUID
+    name = Column(String)  # Razão Social or Name
+
 
 class User(Base):
     __tablename__ = "users"
@@ -115,19 +120,49 @@ class Contact(Base):
 
 
 class LeadStatus(Base):
+    """
+    Mapeia a tabela public.lead_statuses criada nas migrations do Supabase:
+
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    code        text UNIQUE NOT NULL,
+    label       text NOT NULL,
+    description text,
+    is_active   boolean NOT NULL DEFAULT true,
+    sort_order  integer NOT NULL DEFAULT 0,
+    created_at  timestamptz NOT NULL DEFAULT now()
+    """
     __tablename__ = "lead_statuses"
 
     id = Column(String, primary_key=True)
-    name = Column(String, nullable=True)
-    color = Column(String, nullable=True)
+    code = Column(String, nullable=False)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class LeadOrigin(Base):
+    """
+    Mapeia a tabela public.lead_origins criada nas migrations do Supabase:
+
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    code        text UNIQUE NOT NULL,
+    label       text NOT NULL,
+    description text,
+    is_active   boolean NOT NULL DEFAULT true,
+    sort_order  integer NOT NULL DEFAULT 0,
+    created_at  timestamptz NOT NULL DEFAULT now()
+    """
     __tablename__ = "lead_origins"
 
     id = Column(String, primary_key=True)
-    name = Column(String, nullable=True)
-    type = Column(String, nullable=True)
+    code = Column(String, nullable=False)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Lead(Base):
@@ -149,9 +184,6 @@ class Lead(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-
-
-
     # Relationships
     company = relationship("Company")
     owner = relationship("User", foreign_keys=[owner_user_id])
@@ -169,7 +201,7 @@ class Lead(Base):
 class Tag(Base):
     __tablename__ = "tags"
 
-    id = Column(String, primary_key=True, index=True) # UUID
+    id = Column(String, primary_key=True, index=True)  # UUID
     name = Column(String, unique=True)
     color = Column(String, nullable=True)
 
@@ -199,10 +231,11 @@ class LeadActivityStats(Base):
 
     lead = relationship("Lead", back_populates="activity_stats")
 
+
 class Deal(Base):
     __tablename__ = "master_deals"
 
-    id = Column(String, primary_key=True) # UUID
+    id = Column(String, primary_key=True)  # UUID
     # Map 'title' attribute to 'client_name' column
     title = Column("client_name", String)
 
@@ -271,7 +304,7 @@ class CalendarEvent(Base):
     status = Column(String)  # confirmed, tentative, cancelled
     organizer_email = Column(String)
 
-    attendees = Column(Text) # Storing as JSON string for maximum compatibility
+    attendees = Column(Text)  # Storing as JSON string for maximum compatibility
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
