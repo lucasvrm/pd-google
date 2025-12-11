@@ -242,11 +242,11 @@ def sales_view(
         except (ProgrammingError, PsycopgError, Exception) as query_exc:
             sales_view_logger.error(
                 action="sales_view_query_error",
-                status="error",
                 message="Failed to execute sales view query",
-                error_type=type(query_exc).__name__,
-                error=str(query_exc),
+                error=query_exc,
                 exc_info=True,
+                # extra fields
+                original_error_str=str(query_exc)
             )
             return JSONResponse(
                 status_code=500,
@@ -334,10 +334,8 @@ def sales_view(
         sales_view_metrics["errors"] += 1
         sales_view_logger.error(
             action="sales_view",
-            status="error",
             message="Failed to build sales view",
-            error_type=type(exc).__name__,
-            error=str(exc),
+            error=exc,
             exc_info=True
         )
         return JSONResponse(
