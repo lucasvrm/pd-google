@@ -2,8 +2,9 @@
 -- tags table is assumed to exist (Supabase managed)
 
 -- 1. Create lead_tags table
+-- Using UUID for lead_id to match Supabase leads.id type
 CREATE TABLE IF NOT EXISTS lead_tags (
-    lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (lead_id, tag_id)
 );
