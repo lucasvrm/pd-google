@@ -4,7 +4,9 @@ from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
+from psycopg2 import Error as PsycopgError
 from sqlalchemy import func
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 import models
@@ -177,14 +179,14 @@ def sales_view(
             # Apply origin filter - support list
             if origin_filter:
                 base_query = base_query.filter(models.Lead.lead_origin_id.in_(origin_filter))
-            
+
             # Apply priority filter - support list (for priority_bucket)
             if priority_filter:
                 # Note: priority is the bucket (hot/warm/cold), not the score
                 # This would need to be implemented based on calculated buckets
                 # For now, we'll skip this as it requires post-filtering
                 pass
-            
+
             if min_priority_score is not None:
                 base_query = base_query.filter(models.Lead.priority_score >= min_priority_score)
 
@@ -222,21 +224,21 @@ def sales_view(
                 page_size
             ).all()
 
-        except Exception as query_exc:
-            # Catch DB query errors specifically (e.g. missing columns)
+        except (ProgrammingError, PsycopgError, Exception) as query_exc:
             sales_view_logger.error(
                 action="sales_view_query_error",
-                message="Database query failed",
-                error=query_exc,
-                exc_info=True
+                status="error",
+                message="Failed to execute sales view query",
+                error_type=type(query_exc).__name__,
+                error=str(query_exc),
+                exc_info=True,
             )
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": "Database Query Error",
-                    "detail": "Failed to retrieve leads data. Please contact support.",
-                    "context": str(query_exc)
-                }
+                    "error": "sales_view_error",
+                    "message": "Failed to build sales view",
+                },
             )
 
         items: List[LeadSalesViewItem] = []
@@ -317,17 +319,18 @@ def sales_view(
         sales_view_metrics["errors"] += 1
         sales_view_logger.error(
             action="sales_view",
+            status="error",
             message="Failed to build sales view",
-            error=exc,
+            error_type=type(exc).__name__,
+            error=str(exc),
             exc_info=True
         )
         return JSONResponse(
             status_code=500,
             content={
-                "error": "Internal Server Error",
-                "detail": "An unexpected error occurred while processing the request.",
-                "context": str(exc)
-            }
+                "error": "sales_view_error",
+                "message": "Failed to build sales view",
+            },
         )
     finally:
         duration = time.time() - started

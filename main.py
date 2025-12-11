@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from routers import (
     drive,
     webhooks,
@@ -68,6 +69,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def ensure_api_json_error_response(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except HTTPException as http_exc:
+        if request.url.path.startswith("/api"):
+            return JSONResponse(
+                status_code=http_exc.status_code,
+                content={
+                    "error": "http_error",
+                    "message": http_exc.detail
+                    if isinstance(http_exc.detail, str)
+                    else "Request error",
+                },
+            )
+        raise
+    except Exception as exc:
+        if request.url.path.startswith("/api"):
+            logging.getLogger("pipedesk_drive.lead_sales_view").error(
+                "Unhandled exception for API request", exc_info=True
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "internal_server_error",
+                    "message": "An unexpected error occurred",
+                },
+            )
+        raise
 
 app.include_router(drive.router, prefix="/api")
 app.include_router(webhooks.router)
