@@ -1,5 +1,4 @@
 import os
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -35,8 +34,8 @@ def setup_module(module):
     now = datetime.now(timezone.utc)
 
     owner = models.User(id="user-1", name="Alice Seller", email="alice@example.com")
-    vip_tag = models.Tag(name="VIP", color="#ff0000")
-    cold_tag = models.Tag(name="Cold", color="#0000ff")
+    vip_tag = models.Tag(id="tag-vip", name="VIP", color="#ff0000")
+    cold_tag = models.Tag(id="tag-cold", name="Cold", color="#0000ff")
 
     lead_hot = models.Lead(
         id="lead-hot",
@@ -156,7 +155,7 @@ def test_sales_view_endpoint_returns_ordered_leads():
     assert first["priority_score"] >= second["priority_score"]
     assert first["id"] == "lead-hot"
     assert first["priority_bucket"] == "hot"
-    assert "VIP" in first["tags"]
+    assert any(tag["name"] == "VIP" for tag in first["tags"])
     assert first["owner_user_id"] == "user-1"
     assert first["owner"]["name"] == "Alice Seller"
     assert first["next_action"]["code"] == "qualify_to_company"

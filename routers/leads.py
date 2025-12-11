@@ -24,13 +24,31 @@ from services.lead_priority_service import (
     classify_priority_bucket,
 )
 from services.next_action_service import suggest_next_action
+from utils.prometheus import Counter, Histogram
 from utils.structured_logging import StructuredLogger
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
+sales_view_route_id = "sales_view"
 sales_view_logger = StructuredLogger(
     service="lead_sales_view", logger_name="pipedesk_drive.lead_sales_view"
 )
 sales_view_metrics = {"calls": 0, "errors": 0, "total_latency": 0.0}
+
+sales_view_request_counter = Counter(
+    "sales_view_requests_total",
+    "Total number of /api/leads/sales-view requests grouped by HTTP status",
+    ["status_code"],
+)
+sales_view_latency_histogram = Histogram(
+    "sales_view_latency_seconds",
+    "Latency in seconds for /api/leads/sales-view requests",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+sales_view_items_histogram = Histogram(
+    "sales_view_items_returned",
+    "Number of items returned by /api/leads/sales-view",
+    buckets=(0, 1, 5, 10, 20, 50, 100, 200, 500),
+)
 
 
 def get_db():
@@ -119,8 +137,10 @@ def sales_view(
     filters: Optional[str] = Query(None, description="Additional filters (JSON)"),
     db: Session = Depends(get_db),
 ):
-    started = time.time()
+    started = time.perf_counter()
     sales_view_metrics["calls"] += 1
+    http_status = 200
+    item_count = 0
     success = False
 
     # Extract actual values from Query objects (for direct test calls)
@@ -175,23 +195,28 @@ def sales_view(
         sales_view_logger.warning(
             action="sales_view_invalid_param",
             message=f"Invalid order_by parameter: {order_by}, defaulting to priority",
+            route=sales_view_route_id,
         )
         order_field = "priority"
         order_desc = False
 
     # Log initial params
+    request_params = {
+        "page": page,
+        "page_size": effective_page_size,
+        "owner": owner,
+        "owner_filter": owner_filter,
+        "status_filter": status_filter,
+        "origin_filter": origin_filter,
+        "priority_filter": priority_filter,
+        "order_by": order_by,
+        "has_recent_interaction": has_recent_interaction,
+    }
     sales_view_logger.info(
-        action="sales_view",
-        message="Request parameters",
-        params={
-            "page": page,
-            "page_size": effective_page_size,
-            "owner": owner,
-            "owner_filter": owner_filter,
-            "status_filter": status_filter,
-            "origin_filter": origin_filter,
-            "order_by": order_by,
-        },
+        action="sales_view_request",
+        message="Sales view request parameters",
+        route=sales_view_route_id,
+        params=request_params,
     )
 
     try:
@@ -289,14 +314,17 @@ def sales_view(
             )
 
         except (ProgrammingError, PsycopgError, Exception) as query_exc:
+            sales_view_metrics["errors"] += 1
             sales_view_logger.error(
                 action="sales_view_query_error",
                 status="error",
                 message="Failed to execute sales view query",
+                route=sales_view_route_id,
                 error_type=type(query_exc).__name__,
                 error=str(query_exc),
                 exc_info=True,
             )
+            http_status = 500
             return JSONResponse(
                 status_code=500,
                 content={
@@ -394,6 +422,7 @@ def sales_view(
                 sales_view_logger.error(
                     action="sales_view_item_error",
                     message=f"Failed to process lead {lead.id}. Skipping.",
+                    route=sales_view_route_id,
                     error=item_exc,
                     exc_info=True,
                 )
@@ -401,6 +430,7 @@ def sales_view(
                 continue
 
         # Items are already ordered by the database query, no need to re-sort
+        item_count = len(items)
         success = True
         return LeadSalesViewResponse(
             data=items,
@@ -410,7 +440,8 @@ def sales_view(
                 page=page,
             ),
         )
-    except HTTPException:
+    except HTTPException as http_exc:
+        http_status = http_exc.status_code
         raise
     except Exception as exc:  # pragma: no cover - defensive logging path
         sales_view_metrics["errors"] += 1
@@ -418,10 +449,12 @@ def sales_view(
             action="sales_view",
             status="error",
             message="Failed to build sales view",
+            route=sales_view_route_id,
             error_type=type(exc).__name__,
             error=str(exc),
             exc_info=True,
         )
+        http_status = 500
         return JSONResponse(
             status_code=500,
             content={
@@ -431,16 +464,33 @@ def sales_view(
             },
         )
     finally:
-        duration = time.time() - started
+        duration = time.perf_counter() - started
         sales_view_metrics["total_latency"] += duration
         avg_latency = (
             sales_view_metrics["total_latency"]
             / max(sales_view_metrics["calls"], 1)
         )
+
+        try:
+            sales_view_request_counter.labels(status_code=str(http_status)).inc()
+            sales_view_latency_histogram.observe(duration)
+            sales_view_items_histogram.observe(item_count)
+        except Exception as metrics_exc:  # pragma: no cover - defensive
+            sales_view_logger.warning(
+                action="sales_view_metrics_error",
+                message="Failed to emit Prometheus metrics",
+                route=sales_view_route_id,
+                error_type=type(metrics_exc).__name__,
+                error=str(metrics_exc),
+            )
+
         sales_view_logger.info(
             action="sales_view_metrics",
             status="success" if success else "error",
             message="Sales view request telemetry",
+            route=sales_view_route_id,
+            status_code=http_status,
+            item_count=item_count,
             calls=sales_view_metrics["calls"],
             errors=sales_view_metrics["errors"],
             avg_latency_ms=round(avg_latency * 1000, 2),
