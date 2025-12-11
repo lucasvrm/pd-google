@@ -40,6 +40,7 @@ class LeadSalesViewItem(BaseModel):
 class Pagination(BaseModel):
     total: int
     per_page: int
+    page: int
 
 
 class LeadSalesViewResponse(BaseModel):

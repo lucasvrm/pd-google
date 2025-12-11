@@ -203,7 +203,7 @@ def test_sales_view_filter_by_owner_and_ordering():
         result = leads.sales_view(
             page=1,
             page_size=10,
-            owner_id="user-2",
+            owner="user-2",
             order_by="last_interaction",
             db=db,
         )
