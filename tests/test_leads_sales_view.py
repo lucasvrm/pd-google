@@ -35,7 +35,6 @@ def setup_module(module):
     now = datetime.now(timezone.utc)
 
     owner = models.User(id="user-1", name="Alice Seller", email="alice@example.com")
-    contact = models.Contact(id="contact-1", name="Bob Buyer", email="bob@example.com", phone="123")
     vip_tag = models.Tag(name="VIP", color="#ff0000")
     cold_tag = models.Tag(name="Cold", color="#0000ff")
 
@@ -46,7 +45,6 @@ def setup_module(module):
         lead_status_id="qualified",
         lead_origin_id="inbound",
         owner_user_id=owner.id,
-        primary_contact_id=contact.id,
         priority_score=82,
         created_at=now - timedelta(days=3),
         updated_at=now - timedelta(days=1),
@@ -118,7 +116,6 @@ def setup_module(module):
     db.add_all(
         [
             owner,
-            contact,
             vip_tag,
             cold_tag,
             lead_hot,
@@ -162,7 +159,6 @@ def test_sales_view_endpoint_returns_ordered_leads():
     assert "VIP" in first["tags"]
     assert first["owner_user_id"] == "user-1"
     assert first["owner"]["name"] == "Alice Seller"
-    assert first["primary_contact"]["name"] == "Bob Buyer"
     assert first["next_action"]["code"] == "qualify_to_company"
     assert "Engajamento alto" in first["next_action"]["reason"]
     assert body["data"][1]["priority_bucket"] in {"warm", "cold"}
