@@ -48,6 +48,7 @@ def test_sales_view_success(client):
     # create dependencies
     user = User(id="user1", name="Test User", email="test@example.com")
     company = Company(id="comp1", name="Test Corp")
+    tag = Tag(id="tag1", name="Urgente", color="#ff0000")
     lead = Lead(
         id="lead1",
         title="Big Deal", # maps to legal_name
@@ -61,9 +62,14 @@ def test_sales_view_success(client):
         updated_at=datetime.now(timezone.utc)
     )
 
+    db.add(tag)
     db.add(user)
     db.add(company)
     db.add(lead)
+    db.commit()
+
+    lead_tag = LeadTag(lead_id=lead.id, tag_id=tag.id)
+    db.add(lead_tag)
     db.commit()
     db.close()
 
@@ -76,6 +82,15 @@ def test_sales_view_success(client):
     assert data["data"][0]["id"] == "lead1"
     assert data["data"][0]["owner_user_id"] == "user1"
     assert data["data"][0]["owner"]["name"] == "Test User"
+    assert data["data"][0]["primary_contact"] is None
+    assert data["data"][0]["priority_description"] == "Prioridade média"
+
+    tags = data["data"][0]["tags"]
+    assert tags == [{"id": "tag1", "name": "Urgente", "color": "#ff0000"}]
+
+    next_action = data["data"][0]["next_action"]
+    assert set(next_action.keys()) == {"code", "label", "reason"}
+    assert isinstance(next_action["label"], str)
 
 def test_sales_view_null_values(client):
     """Test resilience against NULL values in DB."""
@@ -101,6 +116,9 @@ def test_sales_view_null_values(client):
     assert item["legal_name"] == "Null Lead"
     assert item["lead_status_id"] is None
     assert item["owner"] is None
+    assert item["tags"] == []
+    assert item["primary_contact"] is None
+    assert item["priority_description"] == "Baixa prioridade"
 
 def test_sales_view_invalid_params(client):
     """Test 400 response for invalid parameters."""
