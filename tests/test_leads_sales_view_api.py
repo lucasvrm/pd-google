@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 # Import the application components
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, Company, Contact, User, Tag, LeadTag
+from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag
 from routers import leads
 
 # Setup in-memory SQLite database with StaticPool to share state across threads/connections
@@ -47,17 +47,15 @@ def test_sales_view_success(client):
 
     # create dependencies
     user = User(id="user1", name="Test User", email="test@example.com")
-    contact = Contact(id="contact1", name="John Doe", email="john@example.com", phone="1234567890")
     company = Company(id="comp1", name="Test Corp")
 
     lead = Lead(
         id="lead1",
         title="Big Deal", # maps to legal_name
         trade_name="Big Deal Trade",
-        status="new",
-        origin="inbound",
-        owner_id="user1",
-        primary_contact_id="contact1",
+        lead_status_id="new",
+        lead_origin_id="inbound",
+        owner_user_id="user1",
         qualified_company_id="comp1",
         priority_score=50,
         created_at=datetime.now(timezone.utc),
@@ -65,7 +63,6 @@ def test_sales_view_success(client):
     )
 
     db.add(user)
-    db.add(contact)
     db.add(company)
     db.add(lead)
     db.commit()
@@ -89,7 +86,7 @@ def test_sales_view_null_values(client):
         title="Null Lead",
         # status None
         # origin None
-        # owner_id None
+        # owner_user_id None
         # priority_score Default 0
     )
     db.add(lead)
@@ -101,7 +98,7 @@ def test_sales_view_null_values(client):
     data = response.json()
     item = data["data"][0]
     assert item["legal_name"] == "Null Lead"
-    assert item["status"] is None
+    assert item["lead_status_id"] is None
     assert item["owner"] is None
 
 def test_sales_view_invalid_params(client):

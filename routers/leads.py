@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session, joinedload
 import models
 from database import SessionLocal
 from schemas.leads import (
-    LeadContact,
     LeadOwner,
     LeadSalesViewItem,
     LeadSalesViewResponse,
@@ -165,21 +164,23 @@ def sales_view(
                 .options(
                     joinedload(models.Lead.activity_stats),
                     joinedload(models.Lead.owner),
-                    joinedload(models.Lead.primary_contact),
+                    joinedload(models.Lead.lead_status),
+                    joinedload(models.Lead.lead_origin),
+                    joinedload(models.Lead.qualified_master_deal),
                     joinedload(models.Lead.tags),
                 )
             )
             # Apply owner filter - support list
             if owner_filter:
-                base_query = base_query.filter(models.Lead.owner_id.in_(owner_filter))
-            
+                base_query = base_query.filter(models.Lead.owner_user_id.in_(owner_filter))
+
             # Apply status filter - support list
             if status_filter:
-                base_query = base_query.filter(models.Lead.status.in_(status_filter))
-            
+                base_query = base_query.filter(models.Lead.lead_status_id.in_(status_filter))
+
             # Apply origin filter - support list
             if origin_filter:
-                base_query = base_query.filter(models.Lead.origin.in_(origin_filter))
+                base_query = base_query.filter(models.Lead.lead_origin_id.in_(origin_filter))
             
             # Apply priority filter - support list (for priority_bucket)
             if priority_filter:
@@ -280,21 +281,16 @@ def sales_view(
                         id=str(lead.id), # Ensure ID is string
                         legal_name=getattr(lead, "legal_name", None) or lead.title,
                         trade_name=lead.trade_name,
-                        status=lead.status,
-                        origin=lead.origin,
+                        lead_status_id=lead.lead_status_id,
+                        lead_origin_id=lead.lead_origin_id,
+                        owner_user_id=lead.owner_user_id,
                         owner=lead_owner,
                         priority_score=score,
                         priority_bucket=bucket,
                         last_interaction_at=last_interaction,
-                        primary_contact=
-                        LeadContact(
-                            id=lead.primary_contact.id,
-                            name=lead.primary_contact.name,
-                            email=lead.primary_contact.email,
-                            phone=lead.primary_contact.phone,
-                        )
-                        if lead.primary_contact
-                        else None,
+                        qualified_master_deal_id=lead.qualified_master_deal_id,
+                        address_city=lead.address_city,
+                        address_state=lead.address_state,
                         tags=tags_list,
                         next_action=next_action,
                     )
