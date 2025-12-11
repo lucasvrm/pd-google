@@ -36,8 +36,12 @@ async def lifespan(app: FastAPI):
     # Run database migrations in a separate thread to avoid blocking the event loop
     try:
         from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
+        from migrations.create_lead_tags_table import migrate_create_lead_tags_table
+
         logger.info("Running database migrations...")
         await asyncio.to_thread(migrate_add_soft_delete_fields)
+        await asyncio.to_thread(migrate_create_lead_tags_table)
+
         logger.info("Database migrations completed successfully")
     except ImportError as e:
         logger.warning(f"Migration module not available: {e}")
