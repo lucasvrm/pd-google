@@ -281,9 +281,13 @@ redis-cli ping
 
 **Configurar variáveis de ambiente:**
 ```env
-REDIS_URL=redis://localhost:6379/0
+# Para Docker Compose, use o hostname do serviço Redis
+REDIS_URL=redis://redis:6379/0
 REDIS_CACHE_ENABLED=true
 REDIS_DEFAULT_TTL=180  # 3 minutos
+
+# Para execução local sem Docker, ajuste para localhost se preferir
+# REDIS_URL=redis://localhost:6379/0
 ```
 
 **Como funciona o cache:**
@@ -1001,18 +1005,17 @@ python seed_db.py
   - `/health/gmail` - Status do serviço Gmail
   - Veja [docs/HEALTH_API.md](./docs/HEALTH_API.md) para detalhes completos
 
-### Docker (Futuro)
+### Docker / Docker Compose
 
-```dockerfile
-FROM python:3.12-slim
+```bash
+# Build e subir app + Redis
+docker compose up -d --build
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Verificar se Redis respondeu
+docker compose exec redis redis-cli ping
 
-COPY . .
-
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:8000"]
+# Ver logs do app
+docker compose logs -f app
 ```
 
 ### Variáveis de Ambiente em Produção
