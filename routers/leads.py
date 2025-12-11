@@ -69,10 +69,21 @@ def _normalize_filter_list(value: Optional[str]) -> List[str]:
 @router.get("/sales-view", response_model=LeadSalesViewResponse)
 def sales_view(
     page: int = Query(1, ge=1, description="Página atual"),
-    page_size: int = Query(20, ge=1, le=100, alias="pageSize", description="Quantidade por página"),
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100,
+        alias="pageSize",
+        description="Quantidade por página (aceita pageSize ou page_size)",
+    ),
+    page_size_override: Optional[int] = Query(
+        None, ge=1, le=100, alias="page_size", description="Alias para page_size"
+    ),
     owner: Optional[str] = Query(None, description="Owner ID filter"),
     owner_ids: Optional[str] = Query(None, alias="ownerIds", description="Owner IDs filter (CSV)"),
     owners: Optional[str] = Query(None, description="Owners filter (CSV)"),
+    owner_id: Optional[str] = Query(None, alias="owner_id", description="Owner ID filter (legacy name)"),
+    owner_user_id: Optional[str] = Query(None, alias="owner_user_id", description="Owner user ID filter"),
     status: Optional[str] = Query(None, description="Status filter (CSV)"),
     origin: Optional[str] = Query(None, description="Origin filter (CSV)"),
     priority: Optional[str] = Query(None, description="Priority bucket filter (CSV)"),
@@ -95,12 +106,18 @@ def sales_view(
     owner = _extract_value(owner)
     owner_ids = _extract_value(owner_ids)
     owners = _extract_value(owners)
+    owner_id = _extract_value(owner_id)
+    owner_user_id = _extract_value(owner_user_id)
     status = _extract_value(status)
     origin = _extract_value(origin)
     priority = _extract_value(priority)
     min_priority_score = _extract_value(min_priority_score)
     has_recent_interaction = _extract_value(has_recent_interaction)
     order_by = _extract_value(order_by)
+    page_size_override = _extract_value(page_size_override)
+
+    # Determine effective page size supporting pageSize and page_size
+    effective_page_size = page_size_override or page_size
 
     # Normalize owner filters - accept from multiple sources
     owner_filter = []
@@ -110,7 +127,11 @@ def sales_view(
         owner_filter.extend(_normalize_filter_list(owner_ids))
     if owners:
         owner_filter.extend(_normalize_filter_list(owners))
-    
+    if owner_id:
+        owner_filter.extend(_normalize_filter_list(owner_id))
+    if owner_user_id:
+        owner_filter.extend(_normalize_filter_list(owner_user_id))
+
     # Normalize other filters
     status_filter = _normalize_filter_list(status)
     origin_filter = _normalize_filter_list(origin)
@@ -123,20 +144,14 @@ def sales_view(
         order_desc = True
         order_field = order_by[1:]
 
-    # Manual validation for order_by to ensure 400 Bad Request
     valid_order_by = ["priority", "last_interaction", "created_at"]
     if order_field not in valid_order_by:
         sales_view_logger.warning(
             action="sales_view_invalid_param",
-            message=f"Invalid order_by parameter: {order_by}"
+            message=f"Invalid order_by parameter: {order_by}, defaulting to priority",
         )
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "invalid params",
-                "detail": f"order_by must be one of: {', '.join(valid_order_by)} (optionally prefixed with - for descending)"
-            }
-        )
+        order_field = "priority"
+        order_desc = False
 
     # Log initial params
     sales_view_logger.info(
@@ -144,7 +159,7 @@ def sales_view(
         message="Request parameters",
         params={
             "page": page,
-            "page_size": page_size,
+            "page_size": effective_page_size,
             "owner": owner,
             "owner_filter": owner_filter,
             "status_filter": status_filter,
@@ -220,8 +235,8 @@ def sales_view(
                 base_query = base_query.order_by(order_expr)
 
             total = base_query.count()
-            leads: List[models.Lead] = base_query.offset((page - 1) * page_size).limit(
-                page_size
+            leads: List[models.Lead] = base_query.offset((page - 1) * effective_page_size).limit(
+                effective_page_size
             ).all()
 
         except (ProgrammingError, PsycopgError, Exception) as query_exc:
@@ -309,7 +324,7 @@ def sales_view(
             data=items,
             pagination=Pagination(
                 total=total,
-                per_page=page_size,
+                per_page=effective_page_size,
                 page=page
             )
         )

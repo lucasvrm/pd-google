@@ -110,10 +110,11 @@ def test_sales_view_invalid_params(client):
     assert response.status_code != 500
     assert response.status_code == 400 or response.status_code == 422
 
-    # Test invalid order_by
+    # Test invalid order_by - should fallback to default ordering without error
     response = client.get("/api/leads/sales-view?order_by=invalid_field")
-    # We implemented manual validation to return 400
-    assert response.status_code == 400
+    assert response.status_code == 200
+    body = response.json()
+    assert "data" in body
 
 def test_chaos_scenario_missing_stats(client):
     """Simulate a scenario where stats might be joined but missing."""
