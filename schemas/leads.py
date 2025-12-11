@@ -9,6 +9,17 @@ class LeadOwner(BaseModel):
     name: Optional[str]
 
 
+class TagItem(BaseModel):
+    id: str
+    name: str
+    color: Optional[str] = None
+
+
+class PrimaryContact(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+
+
 class NextAction(BaseModel):
     code: str
     label: str
@@ -29,7 +40,9 @@ class LeadSalesViewItem(BaseModel):
     qualified_master_deal_id: Optional[str]
     address_city: Optional[str]
     address_state: Optional[str]
-    tags: List[str]
+    tags: List[TagItem]
+    primary_contact: Optional[PrimaryContact] = None
+    priority_description: Optional[str] = None
     next_action: NextAction
 
 

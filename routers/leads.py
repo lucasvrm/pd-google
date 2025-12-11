@@ -11,7 +11,14 @@ from sqlalchemy.orm import Session, joinedload
 
 import models
 from database import SessionLocal
-from schemas.leads import LeadOwner, LeadSalesViewItem, LeadSalesViewResponse, Pagination
+from schemas.leads import (
+    LeadOwner,
+    LeadSalesViewItem,
+    LeadSalesViewResponse,
+    Pagination,
+    PrimaryContact,
+    TagItem,
+)
 from services.lead_priority_service import (
     calculate_lead_priority,
     classify_priority_bucket,
@@ -64,6 +71,15 @@ def _normalize_filter_list(value: Optional[str]) -> List[str]:
     items = [item.strip() for item in value.split(",")]
     # Filter out empty strings
     return [item for item in items if item]
+
+
+def _priority_description_from_bucket(bucket: str) -> Optional[str]:
+    descriptions = {
+        "hot": "Alta prioridade",
+        "warm": "Prioridade média",
+        "cold": "Baixa prioridade",
+    }
+    return descriptions.get(bucket)
 
 
 @router.get("/sales-view", response_model=LeadSalesViewResponse)
@@ -312,10 +328,16 @@ def sales_view(
                 last_interaction = _normalize_datetime(last_interaction)
 
                 # Robust tag extraction: filter out None values and ensure string conversion
-                tags_list: List[str] = []
+                tags_list: List[TagItem] = []
                 if lead.tags:
                     tags_list = [
-                        str(tag.name) for tag in lead.tags if tag.name is not None
+                        TagItem(
+                            id=str(tag.id),
+                            name=str(tag.name),
+                            color=tag.color,
+                        )
+                        for tag in lead.tags
+                        if tag and tag.name is not None and tag.id is not None
                     ]
 
                 # Robust next action
@@ -352,6 +374,7 @@ def sales_view(
                         owner=lead_owner,
                         priority_score=score,
                         priority_bucket=bucket,
+                        priority_description=_priority_description_from_bucket(bucket),
                         last_interaction_at=last_interaction,
                         qualified_master_deal_id=(
                             str(lead.qualified_master_deal_id)
@@ -361,6 +384,7 @@ def sales_view(
                         address_city=lead.address_city,
                         address_state=lead.address_state,
                         tags=tags_list,
+                        primary_contact=None,
                         next_action=next_action,
                     )
                 )
