@@ -75,6 +75,7 @@ def test_sales_view_success(client):
 
     response = client.get("/api/leads/sales-view?page=1&pageSize=10&order_by=priority")
     assert response.status_code == 200, f"Response text: {response.text}"
+    assert response.headers["content-type"].startswith("application/json")
     data = response.json()
     assert "data" in data
     assert "pagination" in data
@@ -121,12 +122,17 @@ def test_sales_view_null_values(client):
     assert item["priority_description"] == "Baixa prioridade"
 
 def test_sales_view_invalid_params(client):
-    """Test 400 response for invalid parameters."""
-    # Current behavior might be 422 or 500 depending on where it fails.
-    # We assert != 500 first.
+    """Test 422 response for invalid parameters with normalized error shape."""
     response = client.get("/api/leads/sales-view?page=-1")
-    assert response.status_code != 500
-    assert response.status_code == 400 or response.status_code == 422
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/json")
+    body = response.json()
+    assert body == {
+        "error": "Validation error",
+        "code": "validation_error",
+        "details": body["details"],
+    }
+    assert isinstance(body["details"], list) and len(body["details"]) > 0
 
     # Test invalid order_by - should fallback to default ordering without error
     response = client.get("/api/leads/sales-view?order_by=invalid_field")
@@ -150,3 +156,33 @@ def test_chaos_scenario_missing_stats(client):
 
     response = client.get("/api/leads/sales-view")
     assert response.status_code == 200, f"Chaos failed: {response.text}"
+
+
+def test_sales_view_internal_error_is_json(client):
+    """Simulate an internal error and ensure JSON error contract is returned."""
+
+    def faulty_db():
+        class FaultySession:
+            def query(self, *_, **__):
+                raise Exception("boom")
+
+            def close(self):
+                pass
+
+        yield FaultySession()
+
+    original = app.dependency_overrides.get(leads.get_db)
+    app.dependency_overrides[leads.get_db] = faulty_db
+    try:
+        response = client.get("/api/leads/sales-view")
+        assert response.status_code == 500
+        assert response.headers["content-type"].startswith("application/json")
+        body = response.json()
+        assert body["error"] in {"sales_view_error", "internal_server_error"}
+        assert body["code"] == body["error"]
+        assert "message" in body and isinstance(body["message"], str)
+    finally:
+        if original is not None:
+            app.dependency_overrides[leads.get_db] = original
+        else:
+            del app.dependency_overrides[leads.get_db]
