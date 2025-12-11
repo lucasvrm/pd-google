@@ -114,6 +114,22 @@ class Contact(Base):
     phone = Column(String, nullable=True)
 
 
+class LeadStatus(Base):
+    __tablename__ = "lead_statuses"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    color = Column(String, nullable=True)
+
+
+class LeadOrigin(Base):
+    __tablename__ = "lead_origins"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    type = Column(String, nullable=True)
+
+
 class Lead(Base):
     __tablename__ = "leads"
 
@@ -121,11 +137,13 @@ class Lead(Base):
     # Map 'title' attribute to 'legal_name' column
     title = Column("legal_name", String)
     trade_name = Column(String, nullable=True)
-    status = Column(String, nullable=True)
-    origin = Column(String, nullable=True)
-    owner_id = Column(String, ForeignKey("users.id"), nullable=True)
-    primary_contact_id = Column(String, ForeignKey("contacts.id"), nullable=True)
+    lead_status_id = Column(String, ForeignKey("lead_statuses.id"), nullable=True)
+    lead_origin_id = Column(String, ForeignKey("lead_origins.id"), nullable=True)
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=True)
     qualified_company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    qualified_master_deal_id = Column(String, ForeignKey("master_deals.id"), nullable=True)
+    address_city = Column(String, nullable=True)
+    address_state = Column(String, nullable=True)
     last_interaction_at = Column(DateTime(timezone=True), nullable=True, index=True)
     priority_score = Column(Integer, default=0, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -136,8 +154,10 @@ class Lead(Base):
 
     # Relationships
     company = relationship("Company")
-    owner = relationship("User", foreign_keys=[owner_id])
-    primary_contact = relationship("Contact", foreign_keys=[primary_contact_id])
+    owner = relationship("User", foreign_keys=[owner_user_id])
+    lead_status = relationship("LeadStatus", foreign_keys=[lead_status_id])
+    lead_origin = relationship("LeadOrigin", foreign_keys=[lead_origin_id])
+    qualified_master_deal = relationship("Deal", foreign_keys=[qualified_master_deal_id])
     activity_stats = relationship("LeadActivityStats", back_populates="lead", uselist=False)
     tags = relationship("Tag", secondary="lead_tags", back_populates="leads")
 

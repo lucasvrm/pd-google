@@ -35,12 +35,6 @@ def setup_module(module):
     now = datetime.now(timezone.utc)
 
     owner = models.User(id="user-1", name="Alice Seller", email="alice@example.com")
-    contact = models.Contact(
-        id="contact-1",
-        name="Bob Buyer",
-        email="bob@example.com",
-        phone="555-0100",
-    )
     vip_tag = models.Tag(name="VIP", color="#ff0000")
     cold_tag = models.Tag(name="Cold", color="#0000ff")
 
@@ -48,22 +42,23 @@ def setup_module(module):
         id="lead-hot",
         title="Hot Lead",
         trade_name="Hot Trade",
-        status="qualified",
-        origin="inbound",
-        owner_id=owner.id,
-        primary_contact_id=contact.id,
+        lead_status_id="qualified",
+        lead_origin_id="inbound",
+        owner_user_id=owner.id,
         priority_score=82,
         created_at=now - timedelta(days=3),
         updated_at=now - timedelta(days=1),
         last_interaction_at=now - timedelta(hours=10),
+        address_city="Sao Paulo",
+        address_state="SP",
     )
     lead_cold = models.Lead(
         id="lead-cold",
         title="Cold Lead",
         trade_name="Cold Trade",
-        status="lost",
-        origin="outbound",
-        owner_id=owner.id,
+        lead_status_id="lost",
+        lead_origin_id="outbound",
+        owner_user_id=owner.id,
         priority_score=12,
         created_at=now - timedelta(days=90),
         updated_at=now - timedelta(days=80),
@@ -73,9 +68,9 @@ def setup_module(module):
         id="lead-recent",
         title="Recent Lead",
         trade_name="Recent Trade",
-        status="contacted",
-        origin="partner",
-        owner_id=owner.id,
+        lead_status_id="contacted",
+        lead_origin_id="partner",
+        owner_user_id=owner.id,
         priority_score=50,
         created_at=now - timedelta(days=10),
         updated_at=now - timedelta(days=1),
@@ -85,9 +80,9 @@ def setup_module(module):
         id="lead-old",
         title="Old Lead",
         trade_name="Old Trade",
-        status="new",
-        origin="event",
-        owner_id="user-2",
+        lead_status_id="new",
+        lead_origin_id="event",
+        owner_user_id="user-2",
         priority_score=5,
         created_at=now - timedelta(days=40),
         updated_at=now - timedelta(days=30),
@@ -121,7 +116,6 @@ def setup_module(module):
     db.add_all(
         [
             owner,
-            contact,
             vip_tag,
             cold_tag,
             lead_hot,

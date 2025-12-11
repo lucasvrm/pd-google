@@ -34,19 +34,14 @@ def setup_module(module):
     owner1 = models.User(id="owner-1", name="Alice", email="alice@example.com")
     owner2 = models.User(id="owner-2", name="Bob", email="bob@example.com")
     
-    # Create contacts
-    contact1 = models.Contact(id="contact-1", name="Contact 1", email="c1@example.com")
-    contact2 = models.Contact(id="contact-2", name="Contact 2", email="c2@example.com")
-    
     # Create leads with various statuses, origins, and priorities
     lead1 = models.Lead(
         id="lead-1",
         title="Lead 1",
         trade_name="Trade 1",
-        status="new",
-        origin="inbound",
-        owner_id=owner1.id,
-        primary_contact_id=contact1.id,
+        lead_status_id="new",
+        lead_origin_id="inbound",
+        owner_user_id=owner1.id,
         priority_score=80,
         created_at=now - timedelta(days=5),
         last_interaction_at=now - timedelta(days=1),
@@ -55,10 +50,9 @@ def setup_module(module):
         id="lead-2",
         title="Lead 2",
         trade_name="Trade 2",
-        status="contacted",
-        origin="outbound",
-        owner_id=owner1.id,
-        primary_contact_id=contact2.id,
+        lead_status_id="contacted",
+        lead_origin_id="outbound",
+        owner_user_id=owner1.id,
         priority_score=50,
         created_at=now - timedelta(days=10),
         last_interaction_at=now - timedelta(days=3),
@@ -67,9 +61,9 @@ def setup_module(module):
         id="lead-3",
         title="Lead 3",
         trade_name="Trade 3",
-        status="qualified",
-        origin="partner",
-        owner_id=owner2.id,
+        lead_status_id="qualified",
+        lead_origin_id="partner",
+        owner_user_id=owner2.id,
         priority_score=90,
         created_at=now - timedelta(days=2),
         last_interaction_at=now - timedelta(hours=5),
@@ -78,9 +72,9 @@ def setup_module(module):
         id="lead-4",
         title="Lead 4",
         trade_name="Trade 4",
-        status="lost",
-        origin="inbound",
-        owner_id=owner2.id,
+        lead_status_id="lost",
+        lead_origin_id="inbound",
+        owner_user_id=owner2.id,
         priority_score=20,
         created_at=now - timedelta(days=30),
         last_interaction_at=now - timedelta(days=25),
@@ -109,7 +103,7 @@ def setup_module(module):
     )
 
     db.add_all([
-        owner1, owner2, contact1, contact2,
+        owner1, owner2,
         lead1, lead2, lead3, lead4,
         stats1, stats2, stats3, stats4
     ])
@@ -284,7 +278,7 @@ def test_sales_view_filter_by_status():
         
         assert body["pagination"]["total"] == 1
         assert body["data"][0]["id"] == "lead-1"
-        assert body["data"][0]["status"] == "new"
+        assert body["data"][0]["lead_status_id"] == "new"
     finally:
         db.close()
 
