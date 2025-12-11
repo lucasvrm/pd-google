@@ -14,3 +14,4 @@ PyJWT
 pytest
 pytest-asyncio
 email-validator
+prometheus-client

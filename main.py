@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
+from utils.prometheus import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from routers import (
     drive,
     webhooks,
@@ -143,6 +144,13 @@ app.include_router(crm_communication.router, prefix="/api")
 app.include_router(tasks.router)
 app.include_router(health.router)
 app.include_router(leads.router)
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    """Expose Prometheus metrics collected by the application."""
+    data = generate_latest(REGISTRY)
+    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/")
 def read_root():
