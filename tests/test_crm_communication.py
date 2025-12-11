@@ -243,14 +243,15 @@ class TestCRMCommunicationEndpoints:
         response = test_client.get("/api/crm/invalid/test-id/emails")
         # FastAPI returns 422 for invalid Literal values (Pydantic validation)
         assert response.status_code == 422
-        # The error detail is in a different format for validation errors
-        assert 'detail' in response.json()
+        body = response.json()
+        assert body["code"] == "validation_error"
+        assert "details" in body
     
     def test_entity_not_found(self, test_client):
         """Test with non-existent entity"""
         response = test_client.get("/api/crm/company/nonexistent/emails")
         assert response.status_code == 404
-        assert 'not found' in response.json()['detail']
+        assert 'not found' in response.json()['message']
     
     def test_events_with_status_filter(self, test_client):
         """Test filtering events by status"""
@@ -779,9 +780,9 @@ class TestCRMCommunicationPermissions:
         )
         assert response.status_code == 403
         data = response.json()
-        assert "detail" in data
-        assert "Access denied" in data["detail"]
-        assert "Insufficient permissions" in data["detail"]
+        assert data["code"] == "forbidden"
+        assert "Access denied" in data["message"]
+        assert "Insufficient permissions" in data["message"]
     
     def test_customer_cannot_access_crm_emails(self, test_client):
         """Test that customer role cannot access CRM emails (403)"""
@@ -791,7 +792,7 @@ class TestCRMCommunicationPermissions:
         )
         assert response.status_code == 403
         data = response.json()
-        assert "Access denied" in data["detail"]
+        assert "Access denied" in data["message"]
     
     def test_unknown_role_cannot_access_crm_emails(self, test_client):
         """Test that unknown role cannot access CRM emails (403 - least privilege)"""
@@ -836,7 +837,7 @@ class TestCRMCommunicationPermissions:
         )
         assert response.status_code == 403
         data = response.json()
-        assert "Access denied" in data["detail"]
+        assert "Access denied" in data["message"]
     
     def test_customer_cannot_access_crm_events(self, test_client):
         """Test that customer role cannot access CRM events (403)"""

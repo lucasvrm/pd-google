@@ -203,10 +203,10 @@ class TestDriveItemsEndpoint:
             "/api/drive/items?entityType=invalid&entityId=deal-items-1",
             headers={"x-user-id": "u1", "x-user-role": "admin"}
         )
-        
+
         assert response.status_code == 400
         data = response.json()
-        assert "Invalid entityType" in data["detail"]
+        assert "Invalid entityType" in data["message"]
 
     def test_nonexistent_entity_returns_404(self, client):
         """Test that non-existent entity returns 404"""

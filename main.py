@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from utils.prometheus import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from routers import (
     drive,
@@ -85,25 +85,45 @@ app.add_middleware(
 )
 
 
+HTTP_STATUS_CODE_MAP = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    422: "validation_error",
+    429: "too_many_requests",
+}
+
+
+def _http_exception_to_api_error(exc: HTTPException) -> dict:
+    detail = exc.detail
+    if isinstance(detail, str):
+        message = detail
+    elif isinstance(detail, dict) and "message" in detail:
+        message = str(detail["message"])
+    else:
+        message = str(detail) if detail else "Request error"
+
+    payload = {
+        "error": message,
+        "code": HTTP_STATUS_CODE_MAP.get(exc.status_code, "http_error"),
+        "message": message,
+    }
+
+    if not isinstance(detail, str):
+        payload["details"] = detail
+
+    return payload
+
+
 @app.middleware("http")
 async def ensure_api_json_error_response(request: Request, call_next):
     try:
         response = await call_next(request)
         return response
-    except HTTPException as http_exc:
-        if request.url.path.startswith("/api"):
-            return JSONResponse(
-                status_code=http_exc.status_code,
-                content={
-                    "error": "http_error",
-                    "code": "http_error",
-                    "message": http_exc.detail
-                    if isinstance(http_exc.detail, str)
-                    else "Request error",
-                },
-            )
-        raise
-    except Exception as exc:
+    except Exception:
         if request.url.path.startswith("/api"):
             logging.getLogger("pipedesk_drive.lead_sales_view").error(
                 "Unhandled exception for API request", exc_info=True
@@ -111,12 +131,21 @@ async def ensure_api_json_error_response(request: Request, call_next):
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": "internal_server_error",
+                    "error": "An unexpected error occurred",
                     "code": "internal_server_error",
                     "message": "An unexpected error occurred",
                 },
             )
         raise
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler_for_api(request: Request, exc: HTTPException):
+    """Normalize HTTPException responses for /api routes while preserving defaults elsewhere."""
+    if request.url.path.startswith("/api"):
+        return JSONResponse(status_code=exc.status_code, content=_http_exception_to_api_error(exc))
+
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(RequestValidationError)
@@ -128,6 +157,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             content={
                 "error": "Validation error",
                 "code": "validation_error",
+                "message": "Validation error",
                 "details": exc.errors(),
             },
         )

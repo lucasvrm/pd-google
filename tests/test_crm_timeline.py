@@ -408,7 +408,7 @@ class TestCRMTimelinePermissions:
         )
         assert response.status_code == 403
         data = response.json()
-        assert "Access denied" in data["detail"]
+        assert "Access denied" in data["message"]
     
     def test_customer_cannot_access_timeline(self, test_client):
         """Test that customer role cannot access timeline (403)"""

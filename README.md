@@ -328,6 +328,9 @@ A aplicação estará disponível em `http://localhost:8000`
 
 Acesse a documentação Swagger em: `http://localhost:8000/docs`
 
+- Contrato da visão comercial: [`docs/LEADS_SALES_VIEW_API.md`](docs/LEADS_SALES_VIEW_API.md) documenta o GET `/api/leads/sales-view` (parâmetros, payload normalizado e erros padronizados).
+- Erros padronizados das rotas `/api`: [`docs/API_ERROR_HANDLING.md`](docs/API_ERROR_HANDLING.md) resume o envelope `{error, code, message, details?}` e os códigos mais comuns.
+
 ### Endpoints Principais
 
 #### 1. Listar Arquivos de uma Entidade
