@@ -1,4 +1,3 @@
-cat << 'EOF' > debug_remote.py
 import sys
 import logging
 from database import SessionLocal
@@ -83,4 +82,3 @@ def debug_query():
 
 if __name__ == "__main__":
     debug_query()
-EOF
