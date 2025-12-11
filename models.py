@@ -142,6 +142,7 @@ class Lead(Base):
     owner_user_id = Column(String, ForeignKey("users.id"), nullable=True)
     qualified_company_id = Column(String, ForeignKey("companies.id"), nullable=True)
     qualified_master_deal_id = Column(String, ForeignKey("master_deals.id"), nullable=True)
+    primary_contact_id = Column(String, ForeignKey("contacts.id"), nullable=True)
     address_city = Column(String, nullable=True)
     address_state = Column(String, nullable=True)
     last_interaction_at = Column(DateTime(timezone=True), nullable=True, index=True)
@@ -158,6 +159,7 @@ class Lead(Base):
     lead_status = relationship("LeadStatus", foreign_keys=[lead_status_id])
     lead_origin = relationship("LeadOrigin", foreign_keys=[lead_origin_id])
     qualified_master_deal = relationship("Deal", foreign_keys=[qualified_master_deal_id])
+    primary_contact = relationship("Contact", foreign_keys=[primary_contact_id])
     activity_stats = relationship("LeadActivityStats", back_populates="lead", uselist=False)
     tags = relationship("Tag", secondary="lead_tags", back_populates="leads")
 

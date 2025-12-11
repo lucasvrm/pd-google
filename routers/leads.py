@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 import models
 from database import SessionLocal
 from schemas.leads import (
+    LeadContact,
     LeadOwner,
     LeadSalesViewItem,
     LeadSalesViewResponse,
@@ -161,9 +162,12 @@ def sales_view(
             base_query = (
                 db.query(models.Lead)
                 .outerjoin(models.LeadActivityStats)
+                .outerjoin(models.User, models.User.id == models.Lead.owner_user_id)
+                .outerjoin(models.Contact, models.Contact.id == models.Lead.primary_contact_id)
                 .options(
                     joinedload(models.Lead.activity_stats),
                     joinedload(models.Lead.owner),
+                    joinedload(models.Lead.primary_contact),
                     joinedload(models.Lead.lead_status),
                     joinedload(models.Lead.lead_origin),
                     joinedload(models.Lead.qualified_master_deal),
@@ -273,8 +277,17 @@ def sales_view(
 
                 # Create LeadOwner only if ID is present or handle as Optional
                 lead_owner = None
-                if lead.owner:
+                if getattr(lead, "owner", None):
                     lead_owner = LeadOwner(id=lead.owner.id, name=lead.owner.name)
+
+                lead_contact = None
+                if getattr(lead, "primary_contact", None):
+                    lead_contact = LeadContact(
+                        id=lead.primary_contact.id,
+                        name=lead.primary_contact.name,
+                        email=lead.primary_contact.email,
+                        phone=lead.primary_contact.phone,
+                    )
 
                 items.append(
                     LeadSalesViewItem(
@@ -291,6 +304,7 @@ def sales_view(
                         qualified_master_deal_id=lead.qualified_master_deal_id,
                         address_city=lead.address_city,
                         address_state=lead.address_state,
+                        primary_contact=lead_contact,
                         tags=tags_list,
                         next_action=next_action,
                     )

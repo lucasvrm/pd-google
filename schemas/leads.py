@@ -9,6 +9,13 @@ class LeadOwner(BaseModel):
     name: Optional[str]
 
 
+class LeadContact(BaseModel):
+    id: Optional[str]
+    name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+
+
 class NextAction(BaseModel):
     code: str
     label: str
@@ -23,6 +30,7 @@ class LeadSalesViewItem(BaseModel):
     lead_origin_id: Optional[str]
     owner_user_id: Optional[str]
     owner: Optional[LeadOwner]
+    primary_contact: Optional[LeadContact]
     priority_score: int
     priority_bucket: str
     last_interaction_at: Optional[datetime]

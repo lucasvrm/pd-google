@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 # Import the application components
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag
+from models import Contact, Lead, LeadActivityStats, Company, User, Tag, LeadTag
 from routers import leads
 
 # Setup in-memory SQLite database with StaticPool to share state across threads/connections
@@ -48,6 +48,7 @@ def test_sales_view_success(client):
     # create dependencies
     user = User(id="user1", name="Test User", email="test@example.com")
     company = Company(id="comp1", name="Test Corp")
+    contact = Contact(id="contact1", name="Buyer One", email="buyer@example.com")
 
     lead = Lead(
         id="lead1",
@@ -56,6 +57,7 @@ def test_sales_view_success(client):
         lead_status_id="new",
         lead_origin_id="inbound",
         owner_user_id="user1",
+        primary_contact_id="contact1",
         qualified_company_id="comp1",
         priority_score=50,
         created_at=datetime.now(timezone.utc),
@@ -64,6 +66,7 @@ def test_sales_view_success(client):
 
     db.add(user)
     db.add(company)
+    db.add(contact)
     db.add(lead)
     db.commit()
     db.close()
@@ -75,6 +78,9 @@ def test_sales_view_success(client):
     assert "pagination" in data
     assert len(data["data"]) == 1
     assert data["data"][0]["id"] == "lead1"
+    assert data["data"][0]["owner_user_id"] == "user1"
+    assert data["data"][0]["owner"]["name"] == "Test User"
+    assert data["data"][0]["primary_contact"]["email"] == "buyer@example.com"
 
 def test_sales_view_null_values(client):
     """Test resilience against NULL values in DB."""
