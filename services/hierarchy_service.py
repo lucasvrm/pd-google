@@ -19,9 +19,10 @@ def get_drive_service():
 COMPANIES_ROOT_UUID = str(uuid.UUID('00000000-0000-0000-0000-000000000001'))
 
 class HierarchyService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, drive_service: Optional[Any] = None):
         self.db = db
-        self.drive_service = get_drive_service()
+        # Use injected service or fallback to factory (for backward compatibility)
+        self.drive_service = drive_service if drive_service else get_drive_service()
 
     def _validate_mapping(self, mapping: models.DriveFolder) -> bool:
         """

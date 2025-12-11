@@ -34,32 +34,39 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up application...")
     
     # Run database migrations in a separate thread to avoid blocking the event loop
-    try:
-        from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
-        from migrations.create_lead_tags_table import migrate_create_lead_tags_table
+    if config.RUN_MIGRATIONS_ON_STARTUP:
+        try:
+            from migrations.add_soft_delete_fields import migrate_add_soft_delete_fields
+            from migrations.create_lead_tags_table import migrate_create_lead_tags_table
 
-        logger.info("Running database migrations...")
-        await asyncio.to_thread(migrate_add_soft_delete_fields)
-        await asyncio.to_thread(migrate_create_lead_tags_table)
+            logger.info("Running database migrations...")
+            await asyncio.to_thread(migrate_add_soft_delete_fields)
+            await asyncio.to_thread(migrate_create_lead_tags_table)
 
-        logger.info("Database migrations completed successfully")
-    except ImportError as e:
-        logger.warning(f"Migration module not available: {e}")
-        logger.info("Skipping migrations - if this is a fresh installation, run migrations manually")
-    except Exception as e:
-        logger.warning(f"Migration execution issue: {e}")
-        logger.info("Continuing startup - this is expected if database columns already exist")
+            logger.info("Database migrations completed successfully")
+        except ImportError as e:
+            logger.warning(f"Migration module not available: {e}")
+            logger.info("Skipping migrations - if this is a fresh installation, run migrations manually")
+        except Exception as e:
+            logger.warning(f"Migration execution issue: {e}")
+            logger.info("Continuing startup - this is expected if database columns already exist")
+    else:
+        logger.info("Skipping migrations (RUN_MIGRATIONS_ON_STARTUP=false)")
 
-    try:
-        scheduler_service.start()
-    except Exception as e:
-        logger.error(f"Failed to start scheduler: {e}")
+    if config.SCHEDULER_ENABLED:
+        try:
+            scheduler_service.start()
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
+    else:
+        logger.info("Scheduler disabled (SCHEDULER_ENABLED=false)")
 
     yield
 
     # Shutdown
     logger.info("Shutting down application...")
-    scheduler_service.shutdown()
+    if config.SCHEDULER_ENABLED:
+        scheduler_service.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 

@@ -16,13 +16,30 @@ logger = logging.getLogger("pipedesk_drive.scheduler")
 class SchedulerService:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
-        self.calendar_service = GoogleCalendarService()
+        self._calendar_service = None
+
+    @property
+    def calendar_service(self):
+        """Lazy load calendar service"""
+        if self._calendar_service is None:
+            self._calendar_service = GoogleCalendarService()
+        return self._calendar_service
 
     def start(self):
         """
         Start the scheduler and add jobs.
         """
         if not self.scheduler.running:
+            # Initialize services that might be heavy
+            if self._calendar_service is None:
+                try:
+                    # Accessing property triggers initialization
+                    _ = self.calendar_service
+                except Exception as e:
+                    logger.error(f"Failed to initialize Calendar Service for Scheduler: {e}")
+                    # Decide if we should raise or continue (maybe continue but skip calendar jobs?)
+                    # For now, we'll continue and let jobs fail individually if service is bad
+
             # Check for expiring channels every 6 hours
             self.scheduler.add_job(
                 self.renew_channels_job,
