@@ -204,7 +204,7 @@ def test_scheduler_renew_logic(MockServiceClass):
     }
 
     # Inject mock into scheduler instance
-    scheduler_service.calendar_service = mock_instance
+    scheduler_service._calendar_service = mock_instance
 
     # Run renewal logic
     scheduler_service.renew_expiring_channels(db)

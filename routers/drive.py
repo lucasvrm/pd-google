@@ -28,14 +28,17 @@ from schemas.drive_permissions import (
 
 router = APIRouter()
 
-# Dependency Injection based on Config
-if config.USE_MOCK_DRIVE:
-    print("Using MOCK Drive Service")
-    drive_service = GoogleDriveService()
-else:
-    print("Using REAL Drive Service")
-    drive_service = GoogleDriveRealService()
-drive_permissions_service = DrivePermissionsService(drive_service)
+# Dependency Injection for Drive Service
+def get_drive_service():
+    if config.USE_MOCK_DRIVE:
+        # print("Using MOCK Drive Service") # Removing noise
+        return GoogleDriveService()
+    else:
+        # print("Using REAL Drive Service") # Removing noise
+        return GoogleDriveRealService()
+
+def get_drive_permissions_service(drive_service = Depends(get_drive_service)):
+    return DrivePermissionsService(drive_service)
 
 # --- Pydantic Schemas ---
 
@@ -87,7 +90,7 @@ def _get_entity_folder_or_404(db: Session, entity_type: str, entity_id: str):
     return entity_folder
 
 
-def _validate_file_hierarchy(file_id: str, entity_folder) -> Dict[str, Any]:
+def _validate_file_hierarchy(file_id: str, entity_folder, drive_service) -> Dict[str, Any]:
     try:
         file_meta = drive_service.get_file(file_id)
         parents = file_meta.get("parents", [])
@@ -128,6 +131,7 @@ def get_entity_drive(
     page_size: int = Query(default=50, ge=1, le=200, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
 ):
     try:
         # 0. Validate Entity Type
@@ -136,7 +140,7 @@ def get_entity_drive(
             raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
 
         # 1. Check/Ensure Folder Structure (Hierarchical)
-        hierarchy_service = HierarchyService(db)
+        hierarchy_service = HierarchyService(db, drive_service)
         entity_folder = None
 
         if entity_type == "company":
@@ -242,6 +246,7 @@ def create_subfolder(
     request: CreateFolderRequest,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -259,7 +264,7 @@ def create_subfolder(
         )
 
     # 2. Get root folder
-    hierarchy_service = HierarchyService(db)
+    hierarchy_service = HierarchyService(db, drive_service)
     entity_folder = (
         db.query(models.DriveFolder)
         .filter(
@@ -320,6 +325,7 @@ async def upload_file(
     parent_id: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -413,6 +419,8 @@ def rename_file(
     request: RenameFileRequest,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     """
     Rename a file or folder in Google Drive.
@@ -437,7 +445,7 @@ def rename_file(
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
 
     # 3. Verify File Lineage
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     # 4. Perform Rename
     updated_file = drive_permissions_service.rename(file_id, request.new_name)
@@ -487,6 +495,8 @@ def move_file(
     request: MoveDriveItemRequest,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -503,7 +513,7 @@ def move_file(
         )
 
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     # Validate destination is within hierarchy
     if not drive_service.is_descendant(request.destination_parent_id, entity_folder.folder_id) and request.destination_parent_id != entity_folder.folder_id:
@@ -544,6 +554,8 @@ def list_drive_permissions(
     file_id: str,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -558,7 +570,7 @@ def list_drive_permissions(
         raise HTTPException(status_code=403, detail="User does not have permission to view access controls")
 
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     return drive_permissions_service.list_permissions(file_id)
 
@@ -574,6 +586,8 @@ def add_drive_permission(
     request: DrivePermissionCreate,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -588,7 +602,7 @@ def add_drive_permission(
         raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
 
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     return drive_permissions_service.add_permission(
         file_id,
@@ -610,6 +624,8 @@ def update_drive_permission(
     request: DrivePermissionUpdate,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -624,7 +640,7 @@ def update_drive_permission(
         raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
 
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     return drive_permissions_service.update_permission(file_id, permission_id, request.role)
 
@@ -640,6 +656,8 @@ def delete_drive_permission(
     permission_id: str,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
+    drive_permissions_service: DrivePermissionsService = Depends(get_drive_permissions_service),
 ):
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
@@ -654,7 +672,7 @@ def delete_drive_permission(
         raise HTTPException(status_code=403, detail="User does not have permission to change access controls")
 
     entity_folder = _get_entity_folder_or_404(db, entity_type, entity_id)
-    _validate_file_hierarchy(file_id, entity_folder)
+    _validate_file_hierarchy(file_id, entity_folder, drive_service)
 
     drive_permissions_service.remove_permission(file_id, permission_id)
     return None
@@ -1004,6 +1022,7 @@ def sync_folder_name_endpoint(
     payload: SyncNameRequest,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
 ):
     """
     Endpoint para forçar a sincronização do nome da pasta no Drive
@@ -1011,7 +1030,7 @@ def sync_folder_name_endpoint(
     Deve ser chamado pelo Frontend após editar um Lead/Deal/Company.
     """
     try:
-        hierarchy_service = HierarchyService(db)
+        hierarchy_service = HierarchyService(db, drive_service)
         hierarchy_service.sync_folder_name(payload.entity_type, payload.entity_id)
         return {"status": "synced", "message": "Folder name synchronization triggered"}
     except Exception as e:
@@ -1026,6 +1045,7 @@ def repair_structure_endpoint(
     entity_id: str,
     db: Session = Depends(get_db),
     current_user: UserContext = Depends(get_current_user),
+    drive_service = Depends(get_drive_service),
 ):
     """
     Manually triggers a repair of the folder structure (Templates).
@@ -1041,7 +1061,7 @@ def repair_structure_endpoint(
         if permission == "reader":
             raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-        hierarchy_service = HierarchyService(db)
+        hierarchy_service = HierarchyService(db, drive_service)
         success = hierarchy_service.repair_structure(entity_type, entity_id)
 
         if success:
