@@ -193,7 +193,7 @@ class TestFileSoftDelete:
             headers={"x-user-role": "client", "x-user-id": "reader-user"}
         )
         assert response.status_code == 403
-        assert "does not have permission" in response.json()["detail"]
+        assert "does not have permission" in response.json()["message"]
 
     def test_soft_delete_file_not_found(self, client):
         """Test soft delete of non-existent file"""
@@ -202,7 +202,7 @@ class TestFileSoftDelete:
             headers={"x-user-role": "admin", "x-user-id": "user-5"}
         )
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["message"].lower()
 
     def test_soft_delete_file_already_deleted(self, client):
         """Test soft delete of already deleted file"""
@@ -230,7 +230,7 @@ class TestFileSoftDelete:
             headers={"x-user-role": "admin", "x-user-id": "user-6"}
         )
         assert response.status_code == 400
-        assert "already marked as deleted" in response.json()["detail"]
+        assert "already marked as deleted" in response.json()["message"]
 
     def test_soft_delete_file_writer_role(self, client):
         """Test that writer role can soft delete files"""
@@ -299,7 +299,7 @@ class TestFolderSoftDelete:
             headers={"x-user-role": "client", "x-user-id": "reader-user"}
         )
         assert response.status_code == 403
-        assert "does not have permission" in response.json()["detail"]
+        assert "does not have permission" in response.json()["message"]
 
     def test_soft_delete_folder_writer_role(self, client):
         """Test that writer role (analyst) can soft delete folders"""

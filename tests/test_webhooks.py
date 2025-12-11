@@ -61,7 +61,7 @@ def test_webhook_endpoint_missing_headers():
     """Test webhook endpoint rejects requests with missing required headers."""
     response = client.post("/webhooks/google-drive")
     assert response.status_code == 400
-    assert "Missing required headers" in response.json()["detail"]
+    assert "Missing required headers" in response.json()["message"]
 
 
 def test_webhook_endpoint_sync_notification():
@@ -166,7 +166,7 @@ def test_webhook_endpoint_invalid_token():
     response = client.post("/webhooks/google-drive", headers=headers)
     # Strict token validation: return 403 for invalid tokens
     assert response.status_code == 403
-    assert "Invalid webhook token" in response.json()["detail"]
+    assert "Invalid webhook token" in response.json()["message"]
 
 
 def test_webhook_endpoint_unknown_channel():
@@ -499,4 +499,4 @@ def test_calendar_webhook_with_invalid_token():
     response = client.post("/webhooks/google-drive", headers=headers)
     # Strict token validation: return 403 for invalid tokens
     assert response.status_code == 403
-    assert "Invalid webhook token" in response.json()["detail"]
+    assert "Invalid webhook token" in response.json()["message"]

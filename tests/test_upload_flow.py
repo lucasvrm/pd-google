@@ -235,10 +235,10 @@ class TestUploadFlow:
             files=files,
             headers={"x-user-role": "client", "x-user-id": "test_user"}
         )
-        
+
         # Should be forbidden
         assert response.status_code == 403
-        assert "does not have permission" in response.json()["detail"]
+        assert "does not have permission" in response.json()["message"]
 
     def test_upload_to_nonexistent_entity_fails(self, client):
         """Test that upload to non-existent entity fails gracefully"""
@@ -252,10 +252,10 @@ class TestUploadFlow:
             files=files,
             headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
-        
+
         # Should fail because structure was never initialized
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["message"].lower()
 
     def test_upload_file_metadata_persists_in_mock_drive(self, client):
         """Test that uploaded file metadata is stored in mock drive JSON"""

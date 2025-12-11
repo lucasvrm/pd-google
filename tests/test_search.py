@@ -218,7 +218,7 @@ class TestEntityFilters:
             headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 400
-        assert "Invalid entity_type" in response.json()["detail"]
+        assert "Invalid entity_type" in response.json()["message"]
 
 
 class TestMimeTypeFilter:
@@ -317,7 +317,7 @@ class TestDateFilters:
             headers={"x-user-role": "admin", "x-user-id": "test_user"}
         )
         assert response.status_code == 400
-        assert "Invalid created_from format" in response.json()["detail"]
+        assert "Invalid created_from format" in response.json()["message"]
 
 
 class TestSoftDelete:

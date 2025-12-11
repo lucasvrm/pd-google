@@ -8,6 +8,7 @@ from main import app
 import models
 import os
 import io
+from config import config
 
 # Setup Test DB
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_error_handling.db"
@@ -33,10 +34,15 @@ def setup_module(module):
     # Set environment variable for mock drive
     os.environ["USE_MOCK_DRIVE"] = "true"
     os.environ["DRIVE_ROOT_FOLDER_ID"] = "mock-root-id"
-    
+    config.USE_MOCK_DRIVE = True
+    config.DRIVE_ROOT_FOLDER_ID = os.environ["DRIVE_ROOT_FOLDER_ID"]
+
     # Clean up JSON Mock
     if os.path.exists(MOCK_JSON):
         os.remove(MOCK_JSON)
+
+    if os.path.exists("./test_error_handling.db"):
+        os.remove("./test_error_handling.db")
 
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
@@ -69,11 +75,11 @@ def test_invalid_entity_type():
     
     assert response.status_code == 400
     assert response.headers["content-type"] == "application/json"
-    
+
     data = response.json()
-    assert "detail" in data
-    assert "Invalid entity_type" in data["detail"]
-    assert "company" in data["detail"] or "lead" in data["detail"] or "deal" in data["detail"]
+    assert data["code"] == "bad_request"
+    assert "Invalid entity_type" in data["message"]
+    assert "company" in data["message"] or "lead" in data["message"] or "deal" in data["message"]
 
 
 def test_contact_entity_type_disabled():
@@ -82,10 +88,10 @@ def test_contact_entity_type_disabled():
     
     assert response.status_code == 400
     assert response.headers["content-type"] == "application/json"
-    
+
     data = response.json()
-    assert "detail" in data
-    assert "Invalid entity_type" in data["detail"]
+    assert data["code"] == "bad_request"
+    assert "Invalid entity_type" in data["message"]
 
 
 def test_nonexistent_entity_returns_404():
@@ -98,11 +104,11 @@ def test_nonexistent_entity_returns_404():
     # Should return 404 since the deal doesn't exist
     assert response.status_code == 404
     assert response.headers["content-type"] == "application/json"
-    
+
     data = response.json()
-    assert "detail" in data
+    assert data["code"] == "not_found"
     # The error message should indicate the entity was not found
-    assert "not found" in data["detail"].lower()
+    assert "not found" in data["message"].lower()
 
 
 def test_reader_role_cannot_create_folder():
@@ -120,10 +126,10 @@ def test_reader_role_cannot_create_folder():
     
     assert response.status_code == 403
     assert response.headers["content-type"] == "application/json"
-    
+
     data = response.json()
-    assert "detail" in data
-    assert "permission" in data["detail"].lower()
+    assert data["code"] == "forbidden"
+    assert "permission" in data["message"].lower()
 
 
 def test_reader_role_cannot_upload_file():
@@ -134,20 +140,20 @@ def test_reader_role_cannot_upload_file():
     
     # Create a fake file for upload
     fake_file = io.BytesIO(b"test file content")
-    
+
     # Try to upload with reader role (customer role maps to reader)
     response = client.post(
         "/api/drive/lead/lead-error-test/upload",
         files={"file": ("test.txt", fake_file, "text/plain")},
-        headers={"x-user-role": "customer"}
+        headers={"x-user-role": "customer", "x-user-id": "test_user"}
     )
     
     assert response.status_code == 403
     assert response.headers["content-type"] == "application/json"
-    
+
     data = response.json()
-    assert "detail" in data
-    assert "permission" in data["detail"].lower()
+    assert data["code"] == "forbidden"
+    assert "permission" in data["message"].lower()
 
 
 def test_error_response_format_consistency():
@@ -158,15 +164,15 @@ def test_error_response_format_consistency():
     response1 = client.get("/api/drive/invalid/123", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response1.status_code == 400
     data1 = response1.json()
-    assert "detail" in data1
-    assert isinstance(data1["detail"], str)
+    assert data1["code"] == "bad_request"
+    assert isinstance(data1["message"], str)
     
     # 2. Non-existent entity
     response2 = client.get("/api/drive/deal/nonexistent-id", headers={"x-user-role": "admin", "x-user-id": "test_user"})
     assert response2.status_code == 404
     data2 = response2.json()
-    assert "detail" in data2
-    assert isinstance(data2["detail"], str)
+    assert data2["code"] == "not_found"
+    assert isinstance(data2["message"], str)
     
     # 3. Permission denied
     # First create structure
@@ -180,10 +186,10 @@ def test_error_response_format_consistency():
     )
     assert response3.status_code == 403
     data3 = response3.json()
-    assert "detail" in data3
-    assert isinstance(data3["detail"], str)
-    
-    # All responses should be JSON with 'detail' field containing error message
+    assert data3["code"] == "forbidden"
+    assert isinstance(data3["message"], str)
+
+    # All responses should be JSON with error envelope containing error message
     assert all([
         response1.headers["content-type"] == "application/json",
         response2.headers["content-type"] == "application/json",

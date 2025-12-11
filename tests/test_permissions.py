@@ -273,7 +273,7 @@ class TestPermissionEndpoints:
             headers={"x-user-id": "u2", "x-user-role": "client"}
         )
         assert response.status_code == 403
-        assert "does not have permission" in response.json()["detail"]
+        assert "does not have permission" in response.json()["message"]
 
     def test_analyst_can_create_folder(self, client):
         """Test that analyst role (writer) can create folders"""
@@ -317,4 +317,4 @@ class TestPermissionEndpoints:
             headers={"x-user-id": "u6", "x-user-role": "customer"}
         )
         assert response.status_code == 403
-        assert "does not have permission" in response.json()["detail"]
+        assert "does not have permission" in response.json()["message"]
