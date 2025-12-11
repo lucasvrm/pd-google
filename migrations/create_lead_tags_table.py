@@ -20,15 +20,13 @@ def migrate_create_lead_tags_table():
     # We define the statements here directly to handle splitting reliably for both SQLite and Postgres
     # (Since some drivers don't support multiple statements in one call)
 
-    # NOTE: lead_id is defined as UUID to match Production (Supabase) schema.
-    # If running locally with SQLite (where leads.id might be TEXT), this might need adjustment
-    # or reliance on SQLite's flexible typing.
+    # NOTE: lead_id and tag_id are defined as UUID to match Production (Supabase) schema.
 
     statements = [
         """
         CREATE TABLE IF NOT EXISTS lead_tags (
             lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
             PRIMARY KEY (lead_id, tag_id)
         );
         """,
@@ -56,7 +54,7 @@ def migrate_create_lead_tags_table():
             print(f"\n❌ Migration failed: {e}")
             # If the error is about type mismatch in local dev (TEXT vs UUID), we might log a warning
             if "type" in str(e).lower() or "key" in str(e).lower():
-                print("   (Note: If running locally, this might be due to leads.id being TEXT/VARCHAR while migration expects UUID)")
+                print("   (Note: If running locally, this might be due to leads.id/tags.id being TEXT/VARCHAR while migration expects UUID)")
 
 if __name__ == "__main__":
     migrate_create_lead_tags_table()

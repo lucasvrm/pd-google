@@ -169,7 +169,7 @@ class Lead(Base):
 class Tag(Base):
     __tablename__ = "tags"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True) # UUID
     name = Column(String, unique=True)
     color = Column(String, nullable=True)
 
@@ -180,7 +180,7 @@ class LeadTag(Base):
     __tablename__ = "lead_tags"
 
     lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
-    tag_id = Column(Integer, ForeignKey("tags.id"), primary_key=True)
+    tag_id = Column(String, ForeignKey("tags.id"), primary_key=True)
 
 
 class LeadActivityStats(Base):
