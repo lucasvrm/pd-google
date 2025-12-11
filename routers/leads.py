@@ -301,6 +301,7 @@ def sales_view(
                 status_code=500,
                 content={
                     "error": "sales_view_error",
+                    "code": "sales_view_error",
                     "message": "Failed to build sales view",
                 },
             )
@@ -425,6 +426,7 @@ def sales_view(
             status_code=500,
             content={
                 "error": "sales_view_error",
+                "code": "sales_view_error",
                 "message": "Failed to build sales view",
             },
         )

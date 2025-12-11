@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from routers import (
     drive,
     webhooks,
@@ -93,6 +95,7 @@ async def ensure_api_json_error_response(request: Request, call_next):
                 status_code=http_exc.status_code,
                 content={
                     "error": "http_error",
+                    "code": "http_error",
                     "message": http_exc.detail
                     if isinstance(http_exc.detail, str)
                     else "Request error",
@@ -108,10 +111,28 @@ async def ensure_api_json_error_response(request: Request, call_next):
                 status_code=500,
                 content={
                     "error": "internal_server_error",
+                    "code": "internal_server_error",
                     "message": "An unexpected error occurred",
                 },
             )
         raise
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Normalize validation errors for API routes while preserving default behavior elsewhere."""
+    if request.url.path.startswith("/api"):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "Validation error",
+                "code": "validation_error",
+                "details": exc.errors(),
+            },
+        )
+
+    # Fallback to FastAPI's default handler for non-API routes
+    return await request_validation_exception_handler(request, exc)
 
 app.include_router(drive.router, prefix="/api")
 app.include_router(webhooks.router)
