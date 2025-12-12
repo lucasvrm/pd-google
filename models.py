@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, event, inspect
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -308,3 +310,53 @@ class CalendarEvent(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+LEAD_INTERACTION_TRACKED_FIELDS = {
+    "owner_user_id",
+    "lead_status_id",
+    "lead_origin_id",
+    "title",
+    "trade_name",
+    "priority_score",
+    "qualified_company_id",
+    "qualified_master_deal_id",
+    "address_city",
+    "address_state",
+}
+
+
+def _touch_last_interaction(state, target, now: datetime) -> None:
+    last_attr = getattr(state.attrs, "last_interaction_at", None)
+    if last_attr and not last_attr.history.has_changes():
+        # Only bump when last_interaction_at was not explicitly set in this transaction.
+        target.last_interaction_at = now
+
+
+@event.listens_for(Lead, "before_update", propagate=True)
+def update_lead_interaction_on_change(mapper, connection, target):
+    """
+    Lead-level hook to treat meaningful updates as interactions by bumping
+    updated_at and last_interaction_at (plus stats when present) before flush.
+    """
+    now = datetime.now(timezone.utc)
+
+    state = inspect(target)
+    changed = set()
+    for field in LEAD_INTERACTION_TRACKED_FIELDS:
+        attr_state = getattr(state.attrs, field, None)
+        if attr_state and attr_state.history.has_changes():
+            changed.add(field)
+
+    if not changed:
+        return
+
+    target.updated_at = now
+
+    _touch_last_interaction(state, target, now)
+
+    stats = getattr(target, "activity_stats", None)
+    if stats:
+        # Lead.activity_stats is a one-to-one relationship for engagement snapshots.
+        stats_state = inspect(stats)
+        _touch_last_interaction(stats_state, stats, now)

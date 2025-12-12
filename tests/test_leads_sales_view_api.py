@@ -315,3 +315,90 @@ def test_sales_view_days_without_interaction_filter(client):
     body = response.json()
     ids = [item["id"] for item in body["data"]]
     assert ids == ["stale_lead"]
+
+
+def test_sales_view_updates_last_interaction_on_lead_change(client):
+    """Any meaningful lead update should refresh last_interaction_at for Sales View ordering."""
+    db = TestingSessionLocal()
+    now = datetime.now(timezone.utc)
+    older = now - timedelta(days=5)
+
+    try:
+        user = User(id="owner-change", name="Owner Change")
+        stale_lead = Lead(
+            id="stale_interaction",
+            title="Stale Lead",
+            last_interaction_at=older,
+            updated_at=older,
+        )
+        recent_lead = Lead(
+            id="recent_interaction",
+            title="Recent Lead",
+            last_interaction_at=now - timedelta(days=1),
+        )
+
+        db.add_all([user, stale_lead, recent_lead])
+        db.commit()
+
+        # Changing the owner should count as an interaction and refresh timestamps
+        update_started = datetime.now(timezone.utc)
+        stale_lead.owner_user_id = user.id
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view?order_by=last_interaction")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"][0]["id"] == "stale_interaction"
+
+    last_interaction = datetime.fromisoformat(
+        body["data"][0]["last_interaction_at"].replace("Z", "+00:00")
+    )
+    assert last_interaction >= update_started
+    assert last_interaction <= datetime.now(timezone.utc) + timedelta(minutes=5)
+
+
+def test_sales_view_owner_me_priority_and_days_filter(client):
+    """Combined filters should work together (owner=me + priority + days_without_interaction)."""
+    db = TestingSessionLocal()
+    now = datetime.now(timezone.utc)
+    try:
+        owner = User(id="owner-me", name="Owner Me")
+        other = User(id="owner-other", name="Owner Other")
+
+        hot_stale = Lead(
+            id="lead_hot_stale",
+            title="Hot Stale",
+            owner_user_id=owner.id,
+            priority_score=90,
+            last_interaction_at=now - timedelta(days=10),
+        )
+        warm_stale = Lead(
+            id="lead_warm_stale",
+            title="Warm Stale",
+            owner_user_id=owner.id,
+            priority_score=50,
+            last_interaction_at=now - timedelta(days=10),
+        )
+        hot_other = Lead(
+            id="lead_hot_other",
+            title="Hot Other",
+            owner_user_id=other.id,
+            priority_score=95,
+            last_interaction_at=now - timedelta(days=10),
+        )
+
+        db.add_all([owner, other, hot_stale, warm_stale, hot_other])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/api/leads/sales-view?owner=me&priority=hot&days_without_interaction=7",
+        headers={"x-user-id": "owner-me"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert ids == ["lead_hot_stale"]
