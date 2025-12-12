@@ -185,7 +185,7 @@ def sales_view(
         normalized_owner_filter = []
         for value in owner_filter:
             if isinstance(value, str) and value.lower() == "me":
-                if not current_user or not getattr(current_user, "id", None):
+                if not current_user or not current_user.id:
                     raise HTTPException(
                         status_code=401,
                         detail="Authentication required for owner=me filter",
