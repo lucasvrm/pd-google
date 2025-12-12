@@ -5,7 +5,7 @@ from typing import Any, List, Literal, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg2 import Error as PsycopgError
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
@@ -51,6 +51,9 @@ sales_view_items_histogram = Histogram(
     "Number of items returned by /api/leads/sales-view",
     buckets=(0, 1, 5, 10, 20, 50, 100, 200, 500),
 )
+
+PRIORITY_HOT_THRESHOLD = 70
+PRIORITY_WARM_THRESHOLD = 40
 
 
 def get_db():
@@ -135,6 +138,11 @@ def sales_view(
     has_recent_interaction: Optional[bool] = Query(
         None, description="Filter by recent interaction"
     ),
+    days_without_interaction: Optional[int] = Query(
+        None,
+        ge=1,
+        description="Filter leads without interaction for at least N days",
+    ),
     order_by: str = Query("priority", description="Campo de ordenação"),
     filters: Optional[str] = Query(None, description="Additional filters (JSON)"),
     current_user: Optional[UserContext] = Depends(get_current_user_optional),
@@ -164,6 +172,7 @@ def sales_view(
     has_recent_interaction = _extract_value(has_recent_interaction)
     order_by = _extract_value(order_by)
     page_size_override = _extract_value(page_size_override)
+    days_without_interaction = _extract_value(days_without_interaction)
 
     # Determine effective page size supporting pageSize and page_size
     effective_page_size = page_size_override or page_size
@@ -228,6 +237,7 @@ def sales_view(
         "priority_filter": priority_filter,
         "order_by": order_by,
         "has_recent_interaction": has_recent_interaction,
+        "days_without_interaction": days_without_interaction,
     }
     sales_view_logger.info(
         action="sales_view_request",
@@ -271,10 +281,35 @@ def sales_view(
 
             # Apply priority filter - support list (for priority_bucket)
             if priority_filter:
-                # Note: priority is the bucket (hot/warm/cold), not the score
-                # This would need to be implemented based on calculated buckets
-                # For now, we'll skip this as it requires post-filtering
-                pass
+                bucket_conditions = []
+                for bucket in priority_filter:
+                    bucket_normalized = bucket.lower()
+                    if bucket_normalized == "hot":
+                        bucket_conditions.append(
+                            models.Lead.priority_score >= PRIORITY_HOT_THRESHOLD
+                        )
+                    elif bucket_normalized == "warm":
+                        bucket_conditions.append(
+                            and_(
+                                models.Lead.priority_score >= PRIORITY_WARM_THRESHOLD,
+                                models.Lead.priority_score < PRIORITY_HOT_THRESHOLD,
+                            )
+                        )
+                    elif bucket_normalized == "cold":
+                        bucket_conditions.append(
+                            or_(
+                                models.Lead.priority_score < PRIORITY_WARM_THRESHOLD,
+                                models.Lead.priority_score.is_(None),
+                            )
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid priority bucket: {bucket}",
+                        )
+
+                if bucket_conditions:
+                    base_query = base_query.filter(or_(*bucket_conditions))
 
             if min_priority_score is not None:
                 base_query = base_query.filter(
@@ -287,6 +322,15 @@ def sales_view(
                 models.Lead.updated_at,
                 models.Lead.created_at,
             )
+
+            if days_without_interaction is not None:
+                threshold = datetime.now(timezone.utc) - timedelta(
+                    days=days_without_interaction
+                )
+                base_query = base_query.filter(
+                    (last_interaction_expr <= threshold)
+                    | (last_interaction_expr.is_(None))
+                )
 
             if has_recent_interaction is True:
                 threshold = datetime.now(timezone.utc) - timedelta(days=7)
@@ -366,7 +410,9 @@ def sales_view(
                 last_interaction = (
                     stats.last_interaction_at
                     if stats and stats.last_interaction_at
-                    else lead.updated_at or lead.created_at
+                    else getattr(lead, "last_interaction_at", None)
+                    or lead.updated_at
+                    or lead.created_at
                 )
                 last_interaction = _normalize_datetime(last_interaction)
 
