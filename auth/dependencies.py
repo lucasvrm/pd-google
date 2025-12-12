@@ -50,3 +50,22 @@ async def get_current_user(
         status_code=401,
         detail="Not authenticated. Missing Authorization header or x-user-id header."
     )
+
+
+async def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None, alias="x-user-id"),
+    x_user_role: Optional[str] = Header(None, alias="x-user-role")
+) -> Optional[UserContext]:
+    """
+    Best-effort variant of get_current_user.
+    Returns None when no credentials are provided, otherwise enforces the same validation.
+    """
+    if not authorization and not x_user_id:
+        return None
+
+    return await get_current_user(
+        authorization=authorization,
+        x_user_id=x_user_id,
+        x_user_role=x_user_role,
+    )

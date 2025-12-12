@@ -10,6 +10,8 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 import models
+from auth.dependencies import get_current_user_optional
+from auth.jwt import UserContext
 from database import SessionLocal
 from schemas.leads import (
     LeadOwner,
@@ -135,6 +137,7 @@ def sales_view(
     ),
     order_by: str = Query("priority", description="Campo de ordenação"),
     filters: Optional[str] = Query(None, description="Additional filters (JSON)"),
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     started = time.perf_counter()
@@ -177,6 +180,20 @@ def sales_view(
         owner_filter.extend(_normalize_filter_list(owner_id))
     if owner_user_id:
         owner_filter.extend(_normalize_filter_list(owner_user_id))
+
+    if owner_filter:
+        normalized_owner_filter = []
+        for value in owner_filter:
+            if isinstance(value, str) and value.lower() == "me":
+                if not current_user or not getattr(current_user, "id", None):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Authentication required for owner=me filter",
+                    )
+                normalized_owner_filter.append(str(current_user.id))
+            else:
+                normalized_owner_filter.append(value)
+        owner_filter = normalized_owner_filter
 
     # Normalize other filters
     status_filter = _normalize_filter_list(status)
@@ -317,12 +334,9 @@ def sales_view(
             sales_view_metrics["errors"] += 1
             sales_view_logger.error(
                 action="sales_view_query_error",
-                status="error",
                 message="Failed to execute sales view query",
                 route=sales_view_route_id,
-                error_type=type(query_exc).__name__,
-                error=str(query_exc),
-                exc_info=True,
+                error=query_exc,
             )
             http_status = 500
             return JSONResponse(
@@ -447,12 +461,9 @@ def sales_view(
         sales_view_metrics["errors"] += 1
         sales_view_logger.error(
             action="sales_view",
-            status="error",
             message="Failed to build sales view",
             route=sales_view_route_id,
-            error_type=type(exc).__name__,
-            error=str(exc),
-            exc_info=True,
+            error=exc,
         )
         http_status = 500
         return JSONResponse(
