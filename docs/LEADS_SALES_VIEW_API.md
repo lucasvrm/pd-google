@@ -10,7 +10,7 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 - `page` (int, padrão `1`, >= 1): página solicitada.
 - `pageSize` (int, padrão `20`, 1-100): tamanho de página (camelCase aceito).
 - `page_size` (int, opcional, 1-100): alias em snake_case; se informado, substitui `pageSize`.
-- `owner`, `ownerIds`, `owners`, `owner_id`, `owner_user_id` (string CSV): filtros equivalentes de owner; todos são combinados.
+- `owner`, `ownerIds`, `owners`, `owner_id`, `owner_user_id` (string CSV): filtros equivalentes de owner; todos são combinados. O valor especial `me` é resolvido para o usuário autenticado (headers `Authorization` ou `x-user-id`).
 - `status` (string CSV): filtro por status.
 - `origin` (string CSV): filtro por origens.
 - `priority` (string CSV): filtro por buckets de prioridade (ex.: `hot,warm,cold`).

@@ -93,6 +93,66 @@ def test_sales_view_success(client):
     assert set(next_action.keys()) == {"code", "label", "reason"}
     assert isinstance(next_action["label"], str)
 
+def test_sales_view_owner_me_uses_authenticated_user(client):
+    """owner=me should resolve to the authenticated user id."""
+    db = TestingSessionLocal()
+
+    user1_id = "user1"
+    user2_id = "user2"
+    lead1_id = "lead1"
+    lead2_id = "lead2"
+    user1 = User(id=user1_id, name="User One", email="one@example.com")
+    user2 = User(id=user2_id, name="User Two", email="two@example.com")
+    lead1 = Lead(id=lead1_id, title="Lead One", owner_user_id=user1_id)
+    lead2 = Lead(id=lead2_id, title="Lead Two", owner_user_id=user2_id)
+
+    db.add_all([user1, user2, lead1, lead2])
+    db.commit()
+    db.close()
+
+    response = client.get(
+        "/api/leads/sales-view?page=1&pageSize=10&owner=me",
+        headers={"x-user-id": user1_id},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["owner_user_id"] == user1_id
+    assert body["data"][0]["id"] == lead1_id
+
+def test_sales_view_owner_me_requires_authentication(client):
+    """owner=me without credentials should not raise 500 and should return 401 JSON error."""
+    response = client.get("/api/leads/sales-view?page=1&pageSize=10&owner=me")
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == "unauthorized"
+    assert body["error"] == "Authentication required for owner=me filter"
+    assert body["message"] == "Authentication required for owner=me filter"
+
+def test_sales_view_owner_ids_filter(client):
+    """ownerIds filter should be applied without errors."""
+    db = TestingSessionLocal()
+
+    user1_id = "user1"
+    user2_id = "user2"
+    user1 = User(id=user1_id, name="User One", email="one@example.com")
+    user2 = User(id=user2_id, name="User Two", email="two@example.com")
+    lead1 = Lead(id="lead1", title="Lead One", owner_user_id=user1_id)
+    lead2 = Lead(id="lead2", title="Lead Two", owner_user_id=user2_id)
+
+    db.add_all([user1, user2, lead1, lead2])
+    db.commit()
+    db.close()
+
+    response = client.get(
+        "/api/leads/sales-view?page=1&pageSize=10&ownerIds=user2"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["owner_user_id"] == user2_id
+
 def test_sales_view_null_values(client):
     """Test resilience against NULL values in DB."""
     db = TestingSessionLocal()
@@ -127,11 +187,10 @@ def test_sales_view_invalid_params(client):
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/json")
     body = response.json()
-    assert body == {
-        "error": "Validation error",
-        "code": "validation_error",
-        "details": body["details"],
-    }
+    assert body["error"] == "Validation error"
+    assert body["code"] == "validation_error"
+    assert body["message"] == "Validation error"
+    assert "details" in body
     assert isinstance(body["details"], list) and len(body["details"]) > 0
 
     # Test invalid order_by - should fallback to default ordering without error
@@ -178,8 +237,8 @@ def test_sales_view_internal_error_is_json(client):
         assert response.status_code == 500
         assert response.headers["content-type"].startswith("application/json")
         body = response.json()
-        assert body["error"] in {"sales_view_error", "internal_server_error"}
-        assert body["code"] == body["error"]
+        assert body["error"] == "sales_view_error"
+        assert body["code"] == "sales_view_error"
         assert "message" in body and isinstance(body["message"], str)
     finally:
         if original is not None:
