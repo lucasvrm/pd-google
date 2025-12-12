@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Import the application components
 from main import app
@@ -245,3 +245,73 @@ def test_sales_view_internal_error_is_json(client):
             app.dependency_overrides[leads.get_db] = original
         else:
             del app.dependency_overrides[leads.get_db]
+
+
+def test_sales_view_priority_filter(client):
+    """priority filter should honor hot/warm/cold buckets."""
+    db = TestingSessionLocal()
+
+    hot_lead = Lead(
+        id="lead_hot",
+        title="Hot Lead",
+        priority_score=85,
+    )
+    warm_lead = Lead(
+        id="lead_warm",
+        title="Warm Lead",
+        priority_score=55,
+    )
+    cold_lead = Lead(
+        id="lead_cold",
+        title="Cold Lead",
+        priority_score=10,
+    )
+
+    db.add_all([hot_lead, warm_lead, cold_lead])
+    db.commit()
+    db.close()
+
+    response = client.get("/api/leads/sales-view?priority=hot")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert ids == ["lead_hot"]
+
+    response = client.get("/api/leads/sales-view?priority=warm")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert ids == ["lead_warm"]
+
+    response = client.get("/api/leads/sales-view?priority=cold")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert set(ids) == {"lead_cold"}
+
+
+def test_sales_view_days_without_interaction_filter(client):
+    """days_without_interaction should return leads without interaction for at least N days."""
+    db = TestingSessionLocal()
+    now = datetime.now(timezone.utc)
+
+    stale_lead = Lead(
+        id="stale_lead",
+        title="Stale Lead",
+        last_interaction_at=now - timedelta(days=10),
+    )
+    fresh_lead = Lead(
+        id="fresh_lead",
+        title="Fresh Lead",
+        last_interaction_at=now - timedelta(days=2),
+    )
+
+    db.add_all([stale_lead, fresh_lead])
+    db.commit()
+    db.close()
+
+    response = client.get("/api/leads/sales-view?days_without_interaction=7")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert ids == ["stale_lead"]
