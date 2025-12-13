@@ -96,7 +96,7 @@ def setup_module():
     if os.path.exists("./test_timeline_robustness.db"):
         try:
             os.remove("./test_timeline_robustness.db")
-        except:
+        except OSError:
             pass
 
 

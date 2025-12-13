@@ -13,7 +13,7 @@ This is the "single source of truth" for the Lead/Deal View timeline.
 import json
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -49,7 +49,7 @@ def get_db():
         db.close()
 
 
-def _safe_parse_timestamp(value) -> Optional[datetime]:
+def _safe_parse_timestamp(value: Union[datetime, str, None]) -> Optional[datetime]:
     """
     Safely parse a timestamp value into a datetime object.
     
@@ -193,7 +193,7 @@ def _fetch_calendar_events(
     return entries
 
 
-def _safe_parse_changes(changes) -> Dict[str, Any]:
+def _safe_parse_changes(changes: Union[Dict[str, Any], str, None]) -> Dict[str, Any]:
     """
     Safely parse the changes field from an audit log.
     
