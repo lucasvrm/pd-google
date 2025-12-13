@@ -1,7 +1,10 @@
 import os
 import jwt
+import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
+
+logger = logging.getLogger("pipedesk.auth.jwt")
 
 @dataclass
 class UserContext:
@@ -27,18 +30,35 @@ def verify_supabase_jwt(token: str) -> Optional[UserContext]:
     """
     secret = os.getenv("SUPABASE_JWT_SECRET")
     if not secret:
-        # JWT authentication is not configured, return None to allow fallback to legacy auth
+        logger.warning("SUPABASE_JWT_SECRET is not configured. JWT authentication is disabled.")
         return None
 
-    # Supabase uses HS256 by default
-    payload = jwt.decode(
-        token,
-        secret,
-        algorithms=["HS256"],
-        options={"verify_aud": False} # Supabase aud is usually 'authenticated', but can vary.
-                                      # We can verify it if we knew the expected value.
-                                      # Commonly it is "authenticated" but let's be lenient or check specific config if needed.
-    )
+    # Debug log: show last 4 characters of the secret for verification (never log full secret)
+    logger.debug(f"DEBUG: Attempting to decode token with secret ending in ...{secret[-4:]}")
+
+    try:
+        # Supabase uses HS256 by default
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False}  # Supabase aud is usually 'authenticated', but can vary.
+        )
+    except jwt.ExpiredSignatureError as e:
+        logger.error(f"JWT Error: Token has expired. Details: {e}")
+        raise
+    except jwt.InvalidAudienceError as e:
+        logger.error(f"JWT Error: Audience mismatch. Details: {e}")
+        raise
+    except jwt.InvalidSignatureError as e:
+        logger.error(f"JWT Error: Signature verification failed. Details: {e}")
+        raise
+    except jwt.DecodeError as e:
+        logger.error(f"JWT Error: Token decode failed. Details: {e}")
+        raise
+    except jwt.InvalidTokenError as e:
+        logger.error(f"JWT Error: Invalid token. Details: {e}")
+        raise
 
     # Extract standard claims
     user_id = payload.get("sub")
