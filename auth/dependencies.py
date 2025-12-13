@@ -53,16 +53,16 @@ async def get_current_user(
                 raise HTTPException(status_code=401, detail="Token has expired")
             except jwt.InvalidSignatureError as e:
                 logger.error(f"JWT validation failed: Signature verification failed - {e}")
-                raise HTTPException(status_code=401, detail="Invalid token: Signature verification failed")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except jwt.InvalidAudienceError as e:
                 logger.error(f"JWT validation failed: Audience mismatch - {e}")
-                raise HTTPException(status_code=401, detail="Invalid token: Audience mismatch")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except jwt.DecodeError as e:
                 logger.error(f"JWT validation failed: Token decode error - {e}")
-                raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except jwt.InvalidTokenError as e:
                 logger.error(f"JWT validation failed: Invalid token - {e}")
-                raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except Exception as e:
                 logger.error(f"Unexpected JWT Error: {e}")
                 raise HTTPException(status_code=401, detail="Could not validate credentials")
