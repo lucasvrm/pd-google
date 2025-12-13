@@ -18,7 +18,7 @@ Este documento detalha o plano de execução para integrar o backend `pd-google`
 
 *   **Tarefas:**
     1.  **Migração SQL:** Executar o script SQL (já fornecido na análise) no Supabase para criar `calendar_events` e `calendar_sync_states`.
-    2.  **Atualizar Modelos Python:** Criar arquivo `models/calendar.py` (ou adicionar ao `models.py`) mapeando as novas tabelas SQLAlchemy.
+    2.  **[x] Atualizar Modelos Python:** ✅ Modelos `CalendarSyncState` e `CalendarEvent` adicionados ao `models.py`, mapeando as novas tabelas SQLAlchemy. Documentação completa criada em `docs/backend/database_schema.md`.
     3.  **Configuração de Escopos:** Atualizar a lista de escopos na inicialização das credenciais Google para incluir `https://www.googleapis.com/auth/calendar`.
     4.  **Isolamento do Serviço:** Criar estrutura base de `services/google_calendar_service.py` herdando a lógica de autenticação existente.
 
