@@ -15,6 +15,7 @@ from routers import (
     tasks,
     leads,
     timeline,
+    automation,
 )
 from database import engine
 import models
@@ -184,6 +185,7 @@ app.include_router(tasks.router)
 app.include_router(health.router)
 app.include_router(leads.router)
 app.include_router(timeline.router)
+app.include_router(automation.router)
 
 
 @app.get("/metrics")

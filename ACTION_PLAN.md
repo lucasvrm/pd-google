@@ -201,7 +201,16 @@ This document outlines the comprehensive execution plan for integrating the `pd-
 ### Phase 5: Future/Medium Priority (PLANNED 🔵)
 **Objective:** Advanced features and automation for enhanced productivity.
 
-**Status:** 🔵 **PLANNED**
+**Status:** 🟡 **PARTIALLY COMPLETE**
+
+*   **Completed Features:**
+    1.  ✅ **Gmail Attachment Automation:**
+        *   ✅ `EmailAutomationService` - Core service for processing attachments
+        *   ✅ `POST /api/automation/scan-email/{message_id}` - Manual trigger endpoint
+        *   ✅ `POST /api/automation/scan-lead-emails` - Batch scan for lead emails
+        *   ✅ Automatic Drive folder upload for email attachments
+        *   ✅ Audit log entries for each attachment saved (`action="attachment_autosave"`)
+        *   ✅ Documentation in `docs/backend/email_automation.md`
 
 *   **Planned Features:**
     1.  **SLA Queue Management:**
@@ -214,10 +223,10 @@ This document outlines the comprehensive execution plan for integrating the `pd-
         *   User activity analytics
         *   API usage monitoring
     
-    3.  **Gmail Attachment Automation:**
-        *   Automatic Drive folder creation for email attachments
-        *   Smart file organization
-        *   Attachment preview in timeline
+    3.  **Gmail Attachment Automation (Enhancements):**
+        *   🔵 Smart file organization (subfolder by date/type)
+        *   🔵 Attachment preview in timeline
+        *   🔵 Gmail Push webhook integration for real-time processing
     
     4.  **Meeting Intelligence:**
         *   Automatic meeting notes from calendar descriptions
@@ -325,6 +334,59 @@ This document outlines the comprehensive execution plan for integrating the `pd-
         "limit": 50,
         "offset": 0
       }
+    }
+    ```
+
+### Email Automation API (Phase 5 - IMPLEMENTED ✅)
+
+#### 1. Scan Email for Attachments
+*   **Endpoint:** `POST /api/automation/scan-email/{message_id}`
+*   **Status:** ✅ Implemented
+*   **Request Body:**
+    ```json
+    {
+      "lead_id": "uuid-of-the-lead"
+    }
+    ```
+*   **Response:**
+    ```json
+    {
+      "message_id": "gmail-message-id",
+      "lead_id": "uuid-of-the-lead",
+      "attachments_processed": 2,
+      "attachments_saved": [
+        {
+          "filename": "document.pdf",
+          "file_id": "drive-file-id",
+          "web_view_link": "https://drive.google.com/...",
+          "size": 12345,
+          "mime_type": "application/pdf"
+        }
+      ],
+      "errors": []
+    }
+    ```
+
+#### 2. Scan Lead's Emails for Attachments
+*   **Endpoint:** `POST /api/automation/scan-lead-emails`
+*   **Status:** ✅ Implemented
+*   **Request Body:**
+    ```json
+    {
+      "lead_id": "uuid-of-the-lead",
+      "email_address": "sender@example.com",
+      "max_messages": 10
+    }
+    ```
+*   **Response:**
+    ```json
+    {
+      "lead_id": "uuid-of-the-lead",
+      "email_address": "sender@example.com",
+      "messages_scanned": 5,
+      "messages_with_attachments": 2,
+      "total_attachments_saved": 4,
+      "errors": []
     }
     ```
 
