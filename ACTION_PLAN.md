@@ -53,27 +53,30 @@ This document outlines the comprehensive execution plan for integrating the `pd-
 ### Phase 2: CRM Core - Audit & Security (HIGH PRIORITY 🔴)
 **Objective:** Implement comprehensive audit logging and real RBAC security for enterprise CRM operations.
 
-**Status:** 🔴 **PENDING - HIGH PRIORITY**
+**Status:** 🟡 **PARTIALLY COMPLETE - AUDIT LOGS IMPLEMENTED**
 
 *   **Tasks:**
-    1.  **Audit Log Models:**
-        *   Create `AuditLog` model in `models.py` tracking:
+    1.  **Audit Log Models:** ✅ **COMPLETE**
+        *   ✅ Create `AuditLog` model in `models.py` tracking:
             - Entity type (Lead, Deal, Contact, etc.)
             - Action type (CREATE, UPDATE, DELETE, STATUS_CHANGE)
             - User who made the change
             - Timestamp
             - Before/After values (JSON)
-            - IP address and user agent
-        *   Create `LeadAuditLog` and `DealAuditLog` specialized tables
+        *   Note: Using single `AuditLog` table instead of specialized tables for flexibility
     
-    2.  **SQLAlchemy Event Hooks:**
-        *   Implement `@event.listens_for` hooks on Lead and Deal models
-        *   Listen for specific events: `before_update`, `before_insert`, `before_delete`
-        *   Capture before_update, before_insert, before_delete events
-        *   Automatically log all field changes with old and new values
-        *   Optimize by only capturing tracked fields to minimize performance impact
+    2.  **SQLAlchemy Event Hooks:** ✅ **COMPLETE**
+        *   ✅ Implement `@event.listens_for` hooks on Lead and Deal models
+        *   ✅ Listen for specific events: `after_update`, `after_insert`
+        *   ✅ Automatically log all field changes with old and new values
+        *   ✅ Optimize by only capturing tracked fields to minimize performance impact
+        *   ✅ Created `services/audit_service.py` with:
+            - Event listeners for Lead and Deal models
+            - Context management for tracking actors (users)
+            - Change extraction utilities
+            - Registration function for event listeners
     
-    3.  **RBAC Implementation:**
+    3.  **RBAC Implementation:** 🔴 **PENDING**
         *   Create `services/rbac_service.py` with JWT validation
         *   Implement FastAPI dependencies for role checking:
             - `require_admin()` - Admin-only endpoints
@@ -82,25 +85,26 @@ This document outlines the comprehensive execution plan for integrating the `pd-
         *   Add JWT token validation (not just header reading)
         *   Create role hierarchy: Admin > Manager > Sales > Viewer
     
-    4.  **Audit Log API:**
+    4.  **Audit Log API:** 🔴 **PENDING**
         *   Create `routers/audit_logs.py` with endpoints:
             - GET `/audit-logs` - List all audit logs (admin only)
             - GET `/audit-logs/entity/{type}/{id}` - Get logs for specific entity
             - GET `/audit-logs/user/{user_id}` - Get logs by user
         *   Implement filtering by date range, entity type, action type
     
-    5.  **Security Middleware:**
+    5.  **Security Middleware:** 🔴 **PENDING**
         *   Add JWT validation middleware to main.py
         *   Implement rate limiting for API endpoints
         *   Add request logging for security monitoring
 
 *   **Dependencies:** JWT token configuration in Supabase, User management setup
 *   **Completion Criteria:** 
-    - All Lead/Deal changes automatically logged
-    - JWT tokens properly validated
-    - Role-based access control functional
-    - Audit logs queryable via API
+    - ✅ All Lead/Deal changes automatically logged
+    - 🔴 JWT tokens properly validated
+    - 🔴 Role-based access control functional
+    - 🔴 Audit logs queryable via API
 *   **Risks:** Performance impact on high-volume operations (mitigate with async logging)
+*   **Documentation:** ✅ `docs/backend/audit_system.md` created
 
 ---
 
@@ -453,6 +457,7 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 *   ✅ `CALENDAR_INTEGRATION_STATUS.md` - Implementation status
 *   ✅ `docs/backend/database_schema.md` - Database schema documentation
 *   ✅ `docs/CALENDAR_MIGRATIONS.md` - Migration scripts
+*   ✅ `docs/backend/audit_system.md` - Audit log system documentation (Phase 2)
 
 ### Pending (Phase 2-5) 🔴
 *   🔴 `docs/AUDIT_LOG_API.md` - Audit log API documentation
@@ -488,14 +493,18 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 
 ## Next Immediate Actions
 
-### For Phase 2 (Audit & Security) - START HERE 🔴
-1.  Create `AuditLog` model in `models.py`
-2.  Implement SQLAlchemy event listeners for Lead/Deal models
-3.  Create `services/rbac_service.py` with JWT validation
-4.  Add RBAC dependencies to existing endpoints
-5.  Create `routers/audit_logs.py` with admin-only endpoints
-6.  Write tests for audit logging and RBAC
-7.  Update documentation
+### For Phase 2 (Audit & Security) - IN PROGRESS 🟡
+1.  ✅ Create `AuditLog` model in `models.py`
+2.  ✅ Implement SQLAlchemy event listeners for Lead/Deal models
+3.  ✅ Create `services/audit_service.py` with event hooks and context management
+4.  ✅ Register event listeners in `main.py` startup
+5.  ✅ Write tests for audit logging in `tests/test_audit_logs.py`
+6.  ✅ Create `docs/backend/audit_system.md` documentation
+7.  🔴 Create `services/rbac_service.py` with JWT validation
+8.  🔴 Add RBAC dependencies to existing endpoints
+9.  🔴 Create `routers/audit_logs.py` with admin-only endpoints
+10. 🔴 Write tests for RBAC functionality
+11. 🔴 Update remaining documentation
 
 ### For Phase 3 (Unified Timeline) - AFTER PHASE 2 🔴
 1.  Create `services/timeline_service.py` with aggregation logic

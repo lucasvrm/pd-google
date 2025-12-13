@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, event, inspect
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, event, inspect, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -310,6 +310,25 @@ class CalendarEvent(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AuditLog(Base):
+    """
+    Tracks changes to critical CRM entities (Leads, Deals, etc.).
+    Provides comprehensive audit trail for compliance and debugging.
+    """
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_type = Column(String, index=True, nullable=False)  # "lead", "deal", "contact", etc.
+    entity_id = Column(String, index=True, nullable=False)  # UUID of the entity
+    actor_id = Column(String, ForeignKey("users.id"), index=True, nullable=True)  # User who made the change
+    action = Column(String, index=True, nullable=False)  # "create", "update", "delete", "status_change"
+    changes = Column(JSON, nullable=True)  # JSON: {"field_name": {"old": value, "new": value}}
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True, nullable=False)
+
+    # Relationship to user (optional)
+    actor = relationship("User", foreign_keys=[actor_id])
 
 
 LEAD_INTERACTION_TRACKED_FIELDS = {

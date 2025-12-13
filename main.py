@@ -36,6 +36,14 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up application...")
     
+    # Register audit log event listeners
+    try:
+        from services.audit_service import register_audit_listeners
+        register_audit_listeners()
+        logger.info("Audit log event listeners registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register audit listeners: {e}")
+    
     # Run database migrations in a separate thread to avoid blocking the event loop
     if config.RUN_MIGRATIONS_ON_STARTUP:
         try:
