@@ -37,4 +37,8 @@ class Config:
     # Ex: admin@suaempresa.com. Obrigatório para acessar Gmail/Calendar de usuários.
     GOOGLE_IMPERSONATE_EMAIL = os.getenv("GOOGLE_IMPERSONATE_EMAIL", None)
 
+    # --- SUPABASE JWT AUTH ---
+    # Secret used to verify JWT tokens issued by Supabase.
+    SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", None)
+
 config = Config()

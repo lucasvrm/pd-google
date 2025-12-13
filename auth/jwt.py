@@ -1,8 +1,9 @@
-import os
 import jwt
 import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
+
+from config import config
 
 logger = logging.getLogger("pipedesk.auth.jwt")
 
@@ -28,7 +29,7 @@ def verify_supabase_jwt(token: str) -> Optional[UserContext]:
         jwt.ExpiredSignatureError: If the token has expired.
         jwt.InvalidTokenError: If the token is invalid (bad signature, etc).
     """
-    secret = os.getenv("SUPABASE_JWT_SECRET")
+    secret = config.SUPABASE_JWT_SECRET
     if not secret:
         logger.warning("SUPABASE_JWT_SECRET is not configured. JWT authentication is disabled.")
         return None
