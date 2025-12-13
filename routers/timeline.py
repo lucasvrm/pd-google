@@ -12,8 +12,8 @@ This is the "single source of truth" for the Lead/Deal View timeline.
 
 import json
 import traceback
-from datetime import datetime
-from typing import List, Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -47,6 +47,34 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def _safe_parse_timestamp(value) -> Optional[datetime]:
+    """
+    Safely parse a timestamp value into a datetime object.
+    
+    Args:
+        value: Can be datetime, str (ISO format), or None
+        
+    Returns:
+        datetime object or None if parsing fails
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # Handle ISO format strings
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            timeline_logger.warning(
+                action="parse_timestamp",
+                status="failed",
+                value=str(value)[:100]
+            )
+            return None
+    return None
 
 
 def _fetch_calendar_events(
@@ -91,60 +119,108 @@ def _fetch_calendar_events(
             entity_emails.add(contact.email.lower())
     
     for event in calendar_events:
-        # Check if any attendee matches the entity's emails
-        attendee_emails: List[str] = []
-        if event.attendees:
-            try:
-                attendees_data = json.loads(event.attendees)
-                attendee_emails = [
-                    att.get('email', '').lower() 
-                    for att in attendees_data 
-                    if att.get('email')
-                ]
-            except (json.JSONDecodeError, TypeError):
-                attendee_emails = []
-        
-        # For MVP: include event if entity emails match attendees
-        # or if description/summary contains the entity_id
-        is_related = False
-        
-        if entity_emails and any(email in entity_emails for email in attendee_emails):
-            is_related = True
-        
-        # Also check if entity_id is mentioned in description (future metadata linking)
-        if event.description and entity_id in event.description:
-            is_related = True
-        
-        # For MVP: if no specific matching logic, skip unrelated events
-        if not is_related and entity_emails:
+        try:
+            # Check if any attendee matches the entity's emails
+            attendee_emails: List[str] = []
+            if event.attendees:
+                try:
+                    attendees_data = json.loads(event.attendees)
+                    attendee_emails = [
+                        att.get('email', '').lower() 
+                        for att in attendees_data 
+                        if att.get('email')
+                    ]
+                except (json.JSONDecodeError, TypeError):
+                    attendee_emails = []
+            
+            # For MVP: include event if entity emails match attendees
+            # or if description/summary contains the entity_id
+            is_related = False
+            
+            if entity_emails and any(email in entity_emails for email in attendee_emails):
+                is_related = True
+            
+            # Also check if entity_id is mentioned in description (future metadata linking)
+            if event.description and entity_id in event.description:
+                is_related = True
+            
+            # For MVP: if no specific matching logic, skip unrelated events
+            if not is_related and entity_emails:
+                continue
+            
+            # Safely parse start and end times
+            start_time = _safe_parse_timestamp(event.start_time)
+            end_time = _safe_parse_timestamp(event.end_time)
+            created_at = _safe_parse_timestamp(event.created_at)
+            
+            # Build timeline entry
+            details = {
+                "google_event_id": event.google_event_id,
+                "start_time": start_time.isoformat() if start_time else None,
+                "end_time": end_time.isoformat() if end_time else None,
+                "status": event.status,
+                "meet_link": event.meet_link,
+                "html_link": event.html_link,
+                "attendees": attendee_emails,
+            }
+            
+            # Use organizer as the user
+            user = None
+            if event.organizer_email:
+                user = TimelineUser(email=event.organizer_email)
+            
+            # Determine timestamp - use start_time, fall back to created_at, then current time
+            event_timestamp = start_time or created_at or datetime.now(timezone.utc)
+            
+            entry = TimelineEntry(
+                type="meeting",
+                timestamp=event_timestamp,
+                summary=event.summary or "Calendar Event",
+                details=details,
+                user=user,
+            )
+            entries.append(entry)
+        except Exception as e:
+            # Log error but continue processing other events
+            timeline_logger.warning(
+                action="fetch_calendar_event",
+                status="skipped",
+                event_id=getattr(event, 'id', 'unknown'),
+                error=str(e)
+            )
             continue
-        
-        # Build timeline entry
-        details = {
-            "google_event_id": event.google_event_id,
-            "start_time": event.start_time.isoformat() if event.start_time else None,
-            "end_time": event.end_time.isoformat() if event.end_time else None,
-            "status": event.status,
-            "meet_link": event.meet_link,
-            "html_link": event.html_link,
-            "attendees": attendee_emails,
-        }
-        
-        # Use organizer as the user
-        user = None
-        if event.organizer_email:
-            user = TimelineUser(email=event.organizer_email)
-        
-        entry = TimelineEntry(
-            type="meeting",
-            timestamp=event.start_time or event.created_at,
-            summary=event.summary or "Calendar Event",
-            details=details,
-            user=user,
-        )
-        entries.append(entry)
     
     return entries
+
+
+def _safe_parse_changes(changes) -> Dict[str, Any]:
+    """
+    Safely parse the changes field from an audit log.
+    
+    Args:
+        changes: Can be dict, str (JSON), or None
+        
+    Returns:
+        dict of changes, or empty dict if parsing fails
+    """
+    if changes is None:
+        return {}
+    if isinstance(changes, dict):
+        return changes
+    if isinstance(changes, str):
+        try:
+            parsed = json.loads(changes)
+            if isinstance(parsed, dict):
+                return parsed
+            return {}
+        except (json.JSONDecodeError, TypeError):
+            timeline_logger.warning(
+                action="parse_changes",
+                status="failed",
+                changes_preview=str(changes)[:100]
+            )
+            return {}
+    return {}
 
 
 def _fetch_audit_logs(
@@ -171,50 +247,78 @@ def _fetch_audit_logs(
     ).order_by(models.AuditLog.timestamp.desc()).all()
     
     for log in audit_logs:
-        # Build summary based on action
-        summary = _build_audit_summary(log)
-        
-        # Build details
-        details = {
-            "action": log.action,
-            "changes": log.changes or {},
-        }
-        
-        # Get user info
-        user = None
-        if log.actor:
-            user = TimelineUser(
-                id=log.actor.id,
-                name=log.actor.name,
-                email=log.actor.email,
+        try:
+            # Safely parse the changes field
+            changes = _safe_parse_changes(log.changes)
+            
+            # Build summary based on action (pass parsed changes)
+            summary = _build_audit_summary(log, changes)
+            
+            # Build details
+            details = {
+                "action": log.action,
+                "changes": changes,
+            }
+            
+            # Get user info
+            user = None
+            if log.actor:
+                user = TimelineUser(
+                    id=log.actor.id,
+                    name=log.actor.name,
+                    email=log.actor.email,
+                )
+            elif log.actor_id:
+                user = TimelineUser(id=log.actor_id)
+            
+            # Safely parse timestamp
+            log_timestamp = _safe_parse_timestamp(log.timestamp)
+            if log_timestamp is None:
+                # Skip entry if timestamp is invalid
+                timeline_logger.warning(
+                    action="fetch_audit_log",
+                    status="skipped_invalid_timestamp",
+                    log_id=getattr(log, 'id', 'unknown')
+                )
+                continue
+            
+            entry = TimelineEntry(
+                type="audit",
+                timestamp=log_timestamp,
+                summary=summary,
+                details=details,
+                user=user,
             )
-        elif log.actor_id:
-            user = TimelineUser(id=log.actor_id)
-        
-        entry = TimelineEntry(
-            type="audit",
-            timestamp=log.timestamp,
-            summary=summary,
-            details=details,
-            user=user,
-        )
-        entries.append(entry)
+            entries.append(entry)
+        except Exception as e:
+            # Log error but continue processing other logs
+            timeline_logger.warning(
+                action="fetch_audit_log",
+                status="skipped",
+                log_id=getattr(log, 'id', 'unknown'),
+                error=str(e)
+            )
+            continue
     
     return entries
 
 
-def _build_audit_summary(log: models.AuditLog) -> str:
+def _build_audit_summary(log: models.AuditLog, changes: Optional[Dict[str, Any]] = None) -> str:
     """
     Build a human-readable summary for an audit log entry.
     
     Args:
         log: AuditLog model instance
+        changes: Pre-parsed changes dict (optional, uses log.changes if not provided)
         
     Returns:
         Human-readable summary string
     """
     action = log.action
-    changes = log.changes or {}
+    
+    # Use provided changes or parse from log
+    if changes is None:
+        changes = _safe_parse_changes(log.changes)
     
     if action == "create":
         return f"Created {log.entity_type}"
@@ -224,18 +328,23 @@ def _build_audit_summary(log: models.AuditLog) -> str:
     
     if action == "status_change":
         if "lead_status_id" in changes:
-            old_val = changes["lead_status_id"].get("old", "N/A")
-            new_val = changes["lead_status_id"].get("new", "N/A")
-            return f"Status changed: {old_val} → {new_val}"
+            status_change = changes.get("lead_status_id", {})
+            if isinstance(status_change, dict):
+                old_val = status_change.get("old", "N/A")
+                new_val = status_change.get("new", "N/A")
+                return f"Status changed: {old_val} → {new_val}"
         return f"Status changed"
     
     if action == "update":
         changed_fields = list(changes.keys())
         if len(changed_fields) == 1:
             field = changed_fields[0]
-            old_val = changes[field].get("old", "N/A")
-            new_val = changes[field].get("new", "N/A")
-            return f"{field} changed: {old_val} → {new_val}"
+            field_change = changes.get(field, {})
+            if isinstance(field_change, dict):
+                old_val = field_change.get("old", "N/A")
+                new_val = field_change.get("new", "N/A")
+                return f"{field} changed: {old_val} → {new_val}"
+            return f"{field} changed"
         elif changed_fields:
             return f"Updated: {', '.join(changed_fields)}"
         return "Updated"
