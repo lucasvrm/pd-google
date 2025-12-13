@@ -49,9 +49,20 @@ async def get_current_user(
                 # JWT secret not configured, log warning and fall through to legacy auth
                 logger.warning("JWT token provided but SUPABASE_JWT_SECRET not configured, falling back to legacy authentication")
             except jwt.ExpiredSignatureError:
+                logger.error("JWT validation failed: Token has expired")
                 raise HTTPException(status_code=401, detail="Token has expired")
+            except jwt.InvalidSignatureError as e:
+                logger.error(f"JWT validation failed: Signature verification failed - {e}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+            except jwt.InvalidAudienceError as e:
+                logger.error(f"JWT validation failed: Audience mismatch - {e}")
+                raise HTTPException(status_code=401, detail="Invalid token")
+            except jwt.DecodeError as e:
+                logger.error(f"JWT validation failed: Token decode error - {e}")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except jwt.InvalidTokenError as e:
-                raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+                logger.error(f"JWT validation failed: Invalid token - {e}")
+                raise HTTPException(status_code=401, detail="Invalid token")
             except Exception as e:
                 logger.error(f"Unexpected JWT Error: {e}")
                 raise HTTPException(status_code=401, detail="Could not validate credentials")
