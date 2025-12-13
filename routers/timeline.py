@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
+from auth.dependencies import get_current_user
+from auth.jwt import UserContext
 from schemas.timeline import (
     TimelineEntry,
     TimelinePagination,
@@ -278,7 +280,8 @@ def get_timeline(
     entity_id: str,
     limit: int = Query(50, ge=1, le=200, description="Maximum items to return"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: UserContext = Depends(get_current_user)
 ):
     """
     Get the unified timeline for an entity.

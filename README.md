@@ -152,13 +152,19 @@ Deal - [Nome do Deal]/
 - ✅ Registro em audit log (DriveChangeLog) de todas as operações de soft delete
 - ✅ Requer permissão de escrita (writer ou owner)
 
-### 5. Sistema de Permissões
+### 5. Sistema de Permissões e RBAC
 
 - ✅ Mapeamento de roles da aplicação para permissões do Drive:
   - `admin`, `superadmin` → **owner** (controle total)
   - `manager`, `analyst`, `new_business` → **writer** (ler e escrever)
   - `client`, `customer` → **reader** (apenas leitura)
 - ✅ Headers HTTP para autenticação: `x-user-id` e `x-user-role`
+- ✅ **JWT Token Validation**: Suporte a tokens JWT Supabase via `Authorization: Bearer <token>`
+- ✅ **Role-Based Access Control (RBAC)**:
+  - `get_current_user_with_role(["admin", "manager"])` para proteger endpoints críticos
+  - Hierarquia de roles: Admin > Manager > Analyst/Sales > Viewer/Client
+  - Operações destrutivas (delete folder) requerem admin ou manager
+  - Log de tentativas de acesso negado para auditoria
 
 ### 5. Modo Mock e Real
 
@@ -1378,6 +1384,10 @@ curl -X POST http://localhost:8000/webhooks/google-drive \
 - [ ] Particionamento de tabelas grandes (arquivos)
 
 #### Segurança
+- [x] **JWT Token Validation** - Suporte a tokens Supabase via `SUPABASE_JWT_SECRET` ✅
+- [x] **RBAC (Role-Based Access Control)** - Dependências `get_current_user_with_role()` ✅
+- [x] **Proteção de operações destrutivas** - Delete folder requer admin/manager ✅
+- [x] **Log de tentativas de acesso negado** - Auditoria de segurança ✅
 - [ ] Criptografia de credenciais no BD
 - [ ] Rate limiting por usuário/IP
 - [ ] Validação de MIME types no upload
