@@ -24,6 +24,56 @@ router = APIRouter(
 )
 
 
+def _check_automation_permissions(x_user_role: Optional[str], action: str, context: dict) -> None:
+    """
+    Check if user has permissions for email automation operations.
+    
+    Requires:
+    - Gmail read metadata permission (to read emails)
+    - Drive write permission (to upload attachments)
+    
+    Args:
+        x_user_role: User role from header
+        action: Action name for logging
+        context: Additional context for logging (e.g., message_id, lead_id)
+    
+    Raises:
+        HTTPException: If user doesn't have required permissions
+    """
+    # Check Gmail read permissions
+    gmail_permissions = PermissionService.get_permissions_for_role(x_user_role)
+    if not gmail_permissions.gmail_read_metadata:
+        automation_logger.warning(
+            action=action,
+            status="forbidden",
+            message="Access denied: User does not have Gmail read permission",
+            role=x_user_role or "none",
+            **context
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to read emails"
+        )
+    
+    # Check Drive write permissions (must be writer or owner)
+    drive_permission = PermissionService.get_drive_permission_from_app_role(
+        PermissionService(None), x_user_role, "lead"
+    )
+    if drive_permission not in ("owner", "writer"):
+        automation_logger.warning(
+            action=action,
+            status="forbidden",
+            message="Access denied: User does not have Drive write permission",
+            role=x_user_role or "none",
+            drive_permission=drive_permission,
+            **context
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: You do not have permission to write to Drive"
+        )
+
+
 # Request/Response Schemas
 
 class ScanEmailRequest(BaseModel):
@@ -100,22 +150,15 @@ def scan_email_attachments(
     - Summary of processing including attachments saved and any errors
 
     **Required Permissions:**
-    - Must have write access to Drive (sales role or above)
+    - Gmail read metadata permission
+    - Drive write permission (writer or owner role)
     """
-    # Check permissions - require at least sales role to trigger automation
-    permissions = PermissionService.get_permissions_for_role(x_user_role)
-    if not permissions.gmail_read_metadata:
-        automation_logger.warning(
-            action="scan_email",
-            status="forbidden",
-            message=f"Access denied: User does not have permission to trigger email automation",
-            role=x_user_role or "none",
-            message_id=message_id
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied: You do not have permission to trigger email automation"
-        )
+    # Check both Gmail read and Drive write permissions
+    _check_automation_permissions(
+        x_user_role,
+        action="scan_email",
+        context={"message_id": message_id, "lead_id": request.lead_id}
+    )
 
     automation_logger.info(
         action="scan_email",
@@ -212,22 +255,15 @@ def scan_lead_emails(
     - Summary of processing including total attachments saved and any errors
 
     **Required Permissions:**
-    - Must have write access to Drive (sales role or above)
+    - Gmail read metadata permission
+    - Drive write permission (writer or owner role)
     """
-    # Check permissions
-    permissions = PermissionService.get_permissions_for_role(x_user_role)
-    if not permissions.gmail_read_metadata:
-        automation_logger.warning(
-            action="scan_lead_emails",
-            status="forbidden",
-            message=f"Access denied: User does not have permission to trigger email automation",
-            role=x_user_role or "none",
-            lead_id=request.lead_id
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied: You do not have permission to trigger email automation"
-        )
+    # Check both Gmail read and Drive write permissions
+    _check_automation_permissions(
+        x_user_role,
+        action="scan_lead_emails",
+        context={"lead_id": request.lead_id, "email_address": request.email_address}
+    )
 
     automation_logger.info(
         action="scan_lead_emails",

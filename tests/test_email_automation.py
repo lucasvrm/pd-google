@@ -165,7 +165,7 @@ class MockGmailService:
         }
     
     def _extract_attachments(self, payload):
-        """Extract attachments from payload."""
+        """Extract attachments from payload (internal method)."""
         attachments = []
         
         def extract_recursive(part):
@@ -186,6 +186,18 @@ class MockGmailService:
         
         extract_recursive(payload)
         return attachments
+
+    def extract_attachments(self, payload):
+        """Extract attachments from payload (public method)."""
+        return self._extract_attachments(payload)
+
+    def get_attachment(self, message_id, attachment_id, user_id='me'):
+        """Download attachment data from Gmail API."""
+        return b'fake attachment data'
+
+    def check_auth(self):
+        """Check if authenticated."""
+        return True
 
 
 class MockDriveService:

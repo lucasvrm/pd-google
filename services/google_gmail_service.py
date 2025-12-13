@@ -251,3 +251,59 @@ class GoogleGmailService:
         
         extract_attachments_recursive(payload)
         return attachments
+
+    def extract_attachments(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract attachment information from message payload.
+        
+        This is a public wrapper for the internal _extract_attachments method.
+        
+        Args:
+            payload: Message payload from Gmail API
+            
+        Returns:
+            List of attachment dictionaries with id, filename, mimeType, size
+        """
+        return self._extract_attachments(payload)
+
+    @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
+    def get_attachment(
+        self,
+        message_id: str,
+        attachment_id: str,
+        user_id: str = 'me'
+    ) -> bytes:
+        """
+        Download attachment data from Gmail API.
+        
+        Args:
+            message_id: Gmail message ID
+            attachment_id: Attachment ID within the message
+            user_id: Gmail user ID (default: 'me')
+            
+        Returns:
+            Raw bytes of the attachment content
+        """
+        self._check_auth()
+        
+        result = self.service.users().messages().attachments().get(
+            userId=user_id,
+            messageId=message_id,
+            id=attachment_id
+        ).execute()
+        
+        # Gmail returns attachment data as base64url encoded
+        data = result.get('data', '')
+        if data:
+            return base64.urlsafe_b64decode(data)
+        return b''
+
+    def check_auth(self) -> bool:
+        """
+        Check if the Gmail service is properly authenticated.
+        
+        Returns:
+            True if authenticated, raises Exception otherwise
+        """
+        self._check_auth()
+        return True

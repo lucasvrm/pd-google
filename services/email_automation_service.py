@@ -13,7 +13,6 @@ Used by:
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
 import logging
 
 from sqlalchemy.orm import Session
@@ -21,7 +20,6 @@ from sqlalchemy.orm import Session
 from services.google_gmail_service import GoogleGmailService
 from services.hierarchy_service import HierarchyService, get_drive_service
 from services.audit_service import create_audit_log, get_audit_actor
-from utils.retry import exponential_backoff_retry
 
 logger = logging.getLogger("pipedesk_drive.email_automation")
 
@@ -56,24 +54,7 @@ class EmailAutomationService:
         Returns:
             Raw bytes of the attachment content
         """
-        self.gmail_service._check_auth()
-        
-        @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
-        def _api_call():
-            return self.gmail_service.service.users().messages().attachments().get(
-                userId=user_id,
-                messageId=message_id,
-                id=attachment_id
-            ).execute()
-        
-        result = _api_call()
-        
-        # Gmail returns attachment data as base64url encoded
-        import base64
-        data = result.get('data', '')
-        if data:
-            return base64.urlsafe_b64decode(data)
-        return b''
+        return self.gmail_service.get_attachment(message_id, attachment_id, user_id)
 
     def process_message_attachments(
         self,
@@ -123,7 +104,7 @@ class EmailAutomationService:
             payload = message_data.get('payload', {})
 
             # 2. Identify attachments (MIME parts)
-            attachments = self.gmail_service._extract_attachments(payload)
+            attachments = self.gmail_service.extract_attachments(payload)
 
             if not attachments:
                 logger.info(f"No attachments found in message {message_id}")
