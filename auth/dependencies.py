@@ -64,7 +64,8 @@ async def get_current_user(
                 logger.error(f"JWT validation failed: Invalid token - {e}")
                 raise HTTPException(status_code=401, detail="Invalid token")
             except Exception as e:
-                logger.error(f"Unexpected JWT Error: {e}")
+                logger.error(f"Unexpected JWT Error: {str(e)}")
+                logger.exception("Full traceback for JWT error:")
                 raise HTTPException(status_code=401, detail="Could not validate credentials")
 
     # 2. Fallback to Legacy Headers

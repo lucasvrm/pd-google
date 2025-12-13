@@ -11,6 +11,7 @@ This is the "single source of truth" for the Lead/Deal View timeline.
 """
 
 import json
+import traceback
 from datetime import datetime
 from typing import List, Literal, Optional
 
@@ -389,6 +390,8 @@ def get_timeline(
             entity_id=entity_id,
             error=str(e)
         )
+        # Log full traceback for debugging
+        timeline_logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch timeline: {str(e)}"
