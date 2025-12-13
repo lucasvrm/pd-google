@@ -33,4 +33,8 @@ class Config:
     SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
     RUN_MIGRATIONS_ON_STARTUP = os.getenv("RUN_MIGRATIONS_ON_STARTUP", "true").lower() == "true"
 
+    # Email do usuário do Workspace que a Service Account vai imitar (Subject)
+    # Ex: admin@suaempresa.com. Obrigatório para acessar Gmail/Calendar de usuários.
+    GOOGLE_IMPERSONATE_EMAIL = os.getenv("GOOGLE_IMPERSONATE_EMAIL", None)
+
 config = Config()
