@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Set
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import get_history
 
 # Thread-local storage for tracking the current actor
 import threading
@@ -79,32 +80,38 @@ DEAL_AUDIT_FIELDS: Set[str] = {
 }
 
 
-def extract_changes(state, tracked_fields: Set[str]) -> Dict[str, Dict[str, Any]]:
+def extract_changes(target, tracked_fields: Set[str]) -> Dict[str, Dict[str, Any]]:
     """
-    Extract field changes from SQLAlchemy object state.
+    Extract field changes from SQLAlchemy object.
     
     Args:
-        state: SQLAlchemy InspectionState for the object
+        target: SQLAlchemy model instance
         tracked_fields: Set of field names to track
         
     Returns:
         Dictionary mapping field names to {old: value, new: value}
+    
+    Note:
+        This function works best when expire_on_commit=False is set on the session,
+        otherwise old values may not be available after commits.
     """
     changes = {}
     
     for field in tracked_fields:
-        attr_state = getattr(state.attrs, field, None)
-        if attr_state and attr_state.history.has_changes():
-            history = attr_state.history
+        # Use get_history to properly capture old and new values
+        history = get_history(target, field)
+        
+        if history and history.has_changes():
+            # For before_update events:
+            # - deleted contains the old value being replaced
+            # - added contains the new value being set
             
-            # Get old value (from deleted or unchanged)
+            # Get old value (what's being deleted/replaced)
             old_value = None
             if history.deleted:
                 old_value = history.deleted[0]
-            elif history.unchanged:
-                old_value = history.unchanged[0]
             
-            # Get new value (from added)
+            # Get new value (what's being added)
             new_value = None
             if history.added:
                 new_value = history.added[0]
@@ -161,11 +168,11 @@ def create_audit_log(
 def _log_lead_changes(mapper, connection, target):
     """
     Event hook for Lead updates. Automatically logs changes to tracked fields.
+    Uses before_update to capture old values before they're changed.
     """
-    from models import Lead, AuditLog
+    from models import AuditLog
     
-    state = inspect(target)
-    changes = extract_changes(state, LEAD_AUDIT_FIELDS)
+    changes = extract_changes(target, LEAD_AUDIT_FIELDS)
     
     # Only create audit log if there are actual changes to tracked fields
     if not changes:
@@ -176,34 +183,28 @@ def _log_lead_changes(mapper, connection, target):
     if "lead_status_id" in changes:
         action = "status_change"
     
-    # Get the session from the object
-    session = state.session
-    if session is None:
-        return
+    # Insert directly via connection to avoid flush cycle issues
+    timestamp = datetime.now(timezone.utc)
+    actor_id = get_audit_actor()
     
-    # Create audit log entry
-    audit_log = AuditLog(
-        entity_type="lead",
-        entity_id=str(target.id),
-        actor_id=get_audit_actor(),
-        action=action,
-        changes=changes,
-        timestamp=datetime.now(timezone.utc)
+    connection.execute(
+        AuditLog.__table__.insert().values(
+            entity_type="lead",
+            entity_id=str(target.id),
+            actor_id=actor_id,
+            action=action,
+            changes=changes,
+            timestamp=timestamp
+        )
     )
-    
-    session.add(audit_log)
 
 
 def _log_lead_insert(mapper, connection, target):
     """
     Event hook for Lead creation. Logs the creation event.
+    Uses after_insert since we need the ID to be generated.
     """
-    from models import Lead, AuditLog
-    
-    state = inspect(target)
-    session = state.session
-    if session is None:
-        return
+    from models import AuditLog
     
     # For inserts, we log all tracked fields as "new" values
     changes = {}
@@ -215,57 +216,57 @@ def _log_lead_insert(mapper, connection, target):
                 "new": str(value)
             }
     
-    audit_log = AuditLog(
-        entity_type="lead",
-        entity_id=str(target.id),
-        actor_id=get_audit_actor(),
-        action="create",
-        changes=changes,
-        timestamp=datetime.now(timezone.utc)
-    )
+    # Insert directly via connection
+    timestamp = datetime.now(timezone.utc)
+    actor_id = get_audit_actor()
     
-    session.add(audit_log)
+    connection.execute(
+        AuditLog.__table__.insert().values(
+            entity_type="lead",
+            entity_id=str(target.id),
+            actor_id=actor_id,
+            action="create",
+            changes=changes,
+            timestamp=timestamp
+        )
+    )
 
 
 def _log_deal_changes(mapper, connection, target):
     """
     Event hook for Deal updates. Automatically logs changes to tracked fields.
+    Uses before_update to capture old values before they're changed.
     """
-    from models import Deal, AuditLog
+    from models import AuditLog
     
-    state = inspect(target)
-    changes = extract_changes(state, DEAL_AUDIT_FIELDS)
+    changes = extract_changes(target, DEAL_AUDIT_FIELDS)
     
     # Only create audit log if there are actual changes to tracked fields
     if not changes:
         return
     
-    session = state.session
-    if session is None:
-        return
+    # Insert directly via connection
+    timestamp = datetime.now(timezone.utc)
+    actor_id = get_audit_actor()
     
-    audit_log = AuditLog(
-        entity_type="deal",
-        entity_id=str(target.id),
-        actor_id=get_audit_actor(),
-        action="update",
-        changes=changes,
-        timestamp=datetime.now(timezone.utc)
+    connection.execute(
+        AuditLog.__table__.insert().values(
+            entity_type="deal",
+            entity_id=str(target.id),
+            actor_id=actor_id,
+            action="update",
+            changes=changes,
+            timestamp=timestamp
+        )
     )
-    
-    session.add(audit_log)
 
 
 def _log_deal_insert(mapper, connection, target):
     """
     Event hook for Deal creation. Logs the creation event.
+    Uses after_insert since we need the ID to be generated.
     """
-    from models import Deal, AuditLog
-    
-    state = inspect(target)
-    session = state.session
-    if session is None:
-        return
+    from models import AuditLog
     
     # For inserts, we log all tracked fields as "new" values
     changes = {}
@@ -277,29 +278,38 @@ def _log_deal_insert(mapper, connection, target):
                 "new": str(value)
             }
     
-    audit_log = AuditLog(
-        entity_type="deal",
-        entity_id=str(target.id),
-        actor_id=get_audit_actor(),
-        action="create",
-        changes=changes,
-        timestamp=datetime.now(timezone.utc)
-    )
+    # Insert directly via connection
+    timestamp = datetime.now(timezone.utc)
+    actor_id = get_audit_actor()
     
-    session.add(audit_log)
+    connection.execute(
+        AuditLog.__table__.insert().values(
+            entity_type="deal",
+            entity_id=str(target.id),
+            actor_id=actor_id,
+            action="create",
+            changes=changes,
+            timestamp=timestamp
+        )
+    )
 
 
 def register_audit_listeners() -> None:
     """
     Register all audit log event listeners.
     Should be called once at application startup.
+    
+    Note: Uses insert=True to ensure audit listeners run before other listeners,
+    preserving access to the original field values.
     """
     from models import Lead, Deal
     
-    # Register Lead listeners
-    event.listen(Lead, "after_update", _log_lead_changes, propagate=True)
+    # Register Lead listeners with insert=True to run first
+    # Use before_update to capture old values before they change
+    event.listen(Lead, "before_update", _log_lead_changes, propagate=True, insert=True)
+    # Use after_insert since we need the ID to be generated
     event.listen(Lead, "after_insert", _log_lead_insert, propagate=True)
     
     # Register Deal listeners
-    event.listen(Deal, "after_update", _log_deal_changes, propagate=True)
+    event.listen(Deal, "before_update", _log_deal_changes, propagate=True, insert=True)
     event.listen(Deal, "after_insert", _log_deal_insert, propagate=True)

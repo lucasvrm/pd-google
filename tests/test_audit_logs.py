@@ -33,7 +33,8 @@ def set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Use expire_on_commit=False to preserve object state for audit logging
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 
 
 @pytest.fixture(scope="module", autouse=True)
