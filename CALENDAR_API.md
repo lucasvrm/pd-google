@@ -1,7 +1,7 @@
 # Calendar & Google Meet API Documentation
 
-**Version:** 1.0  
-**Last Updated:** 2024-12-08  
+**Version:** 1.1  
+**Last Updated:** 2024-12-13  
 **Base URL:** `/api/calendar`
 
 ---
@@ -89,6 +89,225 @@ Standard response format for all calendar events.
 - `status` (string, nullable): Event status - `confirmed`, `tentative`, `cancelled`
 - `organizer_email` (string, nullable): Email of the event organizer
 - `attendees` (array): List of attendee objects
+
+---
+
+## Architecture
+
+### Service Layer
+
+The calendar functionality is implemented through the `GoogleCalendarService` class, which handles all interactions with the Google Calendar API. This service is located in `services/google_calendar_service.py`.
+
+#### GoogleCalendarService Methods
+
+##### `__init__(db: Session)`
+Initializes the service with database session and Google Service Account authentication.
+
+**Parameters:**
+- `db` (Session): SQLAlchemy database session for persistence operations
+
+**Scopes:** `https://www.googleapis.com/auth/calendar`
+**Authentication:** Uses `GoogleAuthService` with service account credentials
+**Returns:** Service instance ready for API calls with database access
+
+**Example:**
+```python
+from database import SessionLocal
+
+db = SessionLocal()
+service = GoogleCalendarService(db)
+```
+
+##### `create_event(event_data: Dict, calendar_id: str = 'primary') -> Dict`
+Creates a new event in the specified calendar.
+
+**Parameters:**
+- `event_data` (dict): Event data following Google Calendar API format
+  - `summary` (string): Event title
+  - `description` (string, optional): Event details
+  - `start` (dict): Start time with `dateTime` and `timeZone`
+  - `end` (dict): End time with `dateTime` and `timeZone`
+  - `attendees` (list, optional): List of attendee objects with `email`
+  - `conferenceData` (dict, optional): Conference data for Meet link generation
+- `calendar_id` (string): Target calendar ID (default: 'primary')
+
+**Returns:** Dictionary containing the created event data from Google Calendar API, including:
+- `id`: Google event ID
+- `hangoutLink`: Google Meet link (if requested)
+- `htmlLink`: Calendar view link
+- `status`: Event status
+
+**Features:**
+- Automatic Google Meet link generation with `conferenceDataVersion=1`
+- Retry logic with exponential backoff
+- Error handling for API failures
+
+**Example:**
+```python
+event_data = {
+    'summary': 'Team Meeting',
+    'description': 'Weekly sync',
+    'start': {'dateTime': '2024-01-15T10:00:00Z', 'timeZone': 'UTC'},
+    'end': {'dateTime': '2024-01-15T11:00:00Z', 'timeZone': 'UTC'},
+    'attendees': [{'email': 'user@example.com'}],
+    'conferenceData': {
+        'createRequest': {
+            'requestId': 'req-123',
+            'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+        }
+    }
+}
+result = service.create_event(event_data)
+```
+
+##### `list_events(calendar_id: str = 'primary', time_min: Optional[str] = None, time_max: Optional[str] = None, sync_token: Optional[str] = None) -> Dict`
+Lists events from the calendar with optional filtering and sync support.
+
+**Parameters:**
+- `calendar_id` (string): Calendar ID to query (default: 'primary')
+- `time_min` (string, optional): Start time filter (ISO 8601 format)
+- `time_max` (string, optional): End time filter (ISO 8601 format)
+- `sync_token` (string, optional): Token for incremental sync
+
+**Returns:** Dictionary containing:
+- `items`: List of event objects
+- `nextSyncToken`: Token for next incremental sync
+- `nextPageToken`: Token for pagination
+
+**Features:**
+- Incremental sync support using sync tokens
+- Single event expansion for recurring events
+- Time-based filtering
+- Ordered by start time
+
+**Example:**
+```python
+# List events in time range
+events = service.list_events(
+    time_min='2024-01-01T00:00:00Z',
+    time_max='2024-01-31T23:59:59Z'
+)
+
+# Incremental sync
+events = service.list_events(sync_token='prev_token_here')
+```
+
+##### `get_event(event_id: str, calendar_id: str = 'primary') -> Dict`
+Retrieves a single event by ID.
+
+**Parameters:**
+- `event_id` (string): Google Calendar event ID
+- `calendar_id` (string): Calendar ID (default: 'primary')
+
+**Returns:** Dictionary containing complete event data
+
+**Example:**
+```python
+event = service.get_event('event_id_123')
+```
+
+##### `update_event(event_id: str, event_data: Dict, calendar_id: str = 'primary') -> Dict`
+Updates an existing event using PATCH semantics (partial update).
+
+**Parameters:**
+- `event_id` (string): Google Calendar event ID
+- `event_data` (dict): Fields to update (only provided fields are modified)
+- `calendar_id` (string): Calendar ID (default: 'primary')
+
+**Returns:** Dictionary containing the updated event data
+
+**Features:**
+- Partial updates (PATCH semantics)
+- Retry logic with exponential backoff
+- Preserves unmodified fields
+
+**Example:**
+```python
+updates = {
+    'summary': 'Updated Meeting Title',
+    'start': {'dateTime': '2024-01-15T15:00:00Z', 'timeZone': 'UTC'}
+}
+result = service.update_event('event_id_123', updates)
+```
+
+##### `delete_event(event_id: str, calendar_id: str = 'primary')`
+Deletes (cancels) an event from the calendar.
+
+**Parameters:**
+- `event_id` (string): Google Calendar event ID
+- `calendar_id` (string): Calendar ID (default: 'primary')
+
+**Returns:** Empty response on success
+
+**Features:**
+- Sends cancellation notifications to attendees
+- Retry logic for transient failures
+- Handles already-deleted events gracefully
+
+**Example:**
+```python
+service.delete_event('event_id_123')
+```
+
+##### `watch_events(channel_id: str, webhook_url: str, calendar_id: str = 'primary', token: Optional[str] = None, expiration: Optional[int] = None) -> Dict`
+Registers a webhook channel for calendar change notifications.
+
+**Parameters:**
+- `channel_id` (string): Unique identifier for the channel (UUID recommended)
+- `webhook_url` (string): Public HTTPS URL to receive notifications
+- `calendar_id` (string): Calendar to watch (default: 'primary')
+- `token` (string, optional): Secret token for webhook validation
+- `expiration` (int, optional): Channel expiration time in milliseconds
+
+**Returns:** Dictionary containing:
+- `id`: Channel ID
+- `resourceId`: Google-assigned resource ID
+- `expiration`: Channel expiration timestamp
+- `kind`: Resource type
+
+**Features:**
+- Enables real-time sync via webhooks
+- Automatic sync token management
+- Secure webhook validation
+
+**Example:**
+```python
+import uuid
+channel_id = str(uuid.uuid4())
+result = service.watch_events(
+    channel_id=channel_id,
+    webhook_url='https://api.example.com/webhooks/calendar',
+    token='secret_token_123',
+    expiration=int((datetime.now().timestamp() + 7*24*3600) * 1000)
+)
+```
+
+##### `stop_channel(channel_id: str, resource_id: str)`
+Stops an active webhook channel.
+
+**Parameters:**
+- `channel_id` (string): Channel ID from watch registration
+- `resource_id` (string): Google resource ID from watch response
+
+**Returns:** Empty response on success
+
+**Example:**
+```python
+service.stop_channel('channel_uuid', 'resource_id_from_google')
+```
+
+### Error Handling
+
+All service methods include:
+- **Exponential Backoff Retry:** 3 retries with increasing delay for transient failures
+- **Exception Handling:** Graceful handling of Google API errors
+- **Authentication Checks:** Validates service account configuration before API calls
+
+Common error scenarios:
+- `404 Not Found`: Event doesn't exist or was deleted
+- `410 Gone`: Sync token expired (requires full sync)
+- `403 Forbidden`: Insufficient permissions
+- `500 Internal Server Error`: Google API temporary failure (retries automatically)
 
 ---
 
