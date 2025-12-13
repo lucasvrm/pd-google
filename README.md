@@ -5,6 +5,7 @@ Backend API para gerenciamento de estruturas hierárquicas de pastas no Google D
 ## 📋 Índice
 
 - [Visão Geral](#visão-geral)
+- [New Features](#-new-features)
 - [Arquitetura](#arquitetura)
 - [Funcionalidades Implementadas](#funcionalidades-implementadas)
 - [Instalação e Configuração](#instalação-e-configuração)
@@ -24,6 +25,80 @@ O **PipeDesk Google Drive Backend** é uma aplicação FastAPI que gerencia auto
 - Suporta operações de upload, criação de pastas e listagem de arquivos
 - Oferece modo mock para desenvolvimento e testes sem necessidade de credenciais do Google
 - Integra-se com banco de dados Supabase para buscar informações das entidades
+
+## 🆕 New Features
+
+This section summarizes the latest capabilities added to the PipeDesk Google Backend.
+
+### Audit Logging
+
+Complete audit trail for all CRM entity changes:
+
+- **Automatic tracking** of create, update, and delete operations on Leads, Deals, and Contacts
+- **Change history** with before/after values for each field modification
+- **User attribution** linking each action to the user who performed it
+- **Timeline integration** via `GET /api/timeline/{entity_type}/{entity_id}` endpoint
+
+**Example Audit Entry:**
+```json
+{
+  "type": "audit",
+  "timestamp": "2024-01-14T10:30:00Z",
+  "summary": "Status changed: New → Qualified",
+  "details": {
+    "action": "status_change",
+    "changes": {
+      "lead_status_id": { "old": "new", "new": "qualified" }
+    }
+  },
+  "user": { "name": "Jane Smith", "email": "jane@company.com" }
+}
+```
+
+### Real-time Synchronization
+
+Automatic two-way sync with Google services via webhooks:
+
+- **Calendar Sync**: Events created in Google Calendar are automatically mirrored to our database
+- **Drive Sync**: File changes (add, update, delete) are tracked in real-time
+- **No polling required**: Frontend applications simply query our API - all data is already synchronized
+- **Webhook-based**: Google sends notifications immediately when changes occur
+
+**Sync Architecture:**
+```
+Google APIs ──(webhook)──> PipeDesk Backend ──(sync)──> Database ──(query)──> Frontend
+```
+
+### SLA & Performance Monitoring
+
+Service health monitoring and performance tracking:
+
+- **Health endpoints** for monitoring service status:
+  - `GET /health` - Overall system health
+  - `GET /health/calendar` - Calendar service status
+  - `GET /health/gmail` - Gmail service status
+- **Status levels**: `healthy`, `degraded`, `unhealthy`
+- **Metrics tracked**: Active webhook channels, last sync time, event counts
+
+**Health Check Response:**
+```json
+{
+  "overall_status": "healthy",
+  "services": {
+    "calendar": { "status": "healthy", "active_channels": 2 },
+    "gmail": { "status": "healthy", "auth_ok": true }
+  }
+}
+```
+
+### Frontend Integration
+
+A comprehensive guide for frontend developers is available at [`docs/frontend_integration_guide.md`](./docs/frontend_integration_guide.md), covering:
+
+- Timeline API usage with example responses
+- Calendar API with Google Meet link creation
+- Real-time sync explanation (no polling needed)
+- Authentication and error handling patterns
 
 ## 🏗️ Arquitetura
 
