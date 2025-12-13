@@ -6,6 +6,7 @@ including the role hierarchy, access checks, and protected endpoints.
 """
 
 import pytest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -37,17 +38,14 @@ def override_get_db():
         db.close()
 
 
-MOCK_JSON = "mock_drive_db.json"
+MOCK_JSON = Path("mock_drive_db.json")
+TEST_DB = Path("./test_rbac.db")
 
 
 def setup_module(module):
-    # Clean up JSON Mock
-    if os.path.exists(MOCK_JSON):
-        os.remove(MOCK_JSON)
-    
-    # Clean up old test DB
-    if os.path.exists("./test_rbac.db"):
-        os.remove("./test_rbac.db")
+    # Clean up files from previous test runs (using pathlib for cleaner code)
+    MOCK_JSON.unlink(missing_ok=True)
+    TEST_DB.unlink(missing_ok=True)
 
     # Configure mock mode
     os.environ["USE_MOCK_DRIVE"] = "true"
@@ -86,10 +84,9 @@ def teardown_module(module):
     # Clear ALL dependency overrides to avoid conflicts with other tests
     app.dependency_overrides.clear()
     
-    if os.path.exists("./test_rbac.db"):
-        os.remove("./test_rbac.db")
-    if os.path.exists(MOCK_JSON):
-        os.remove(MOCK_JSON)
+    # Clean up test files (using pathlib for cleaner code)
+    TEST_DB.unlink(missing_ok=True)
+    MOCK_JSON.unlink(missing_ok=True)
 
 
 class TestRoleHierarchy:

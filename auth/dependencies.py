@@ -8,14 +8,16 @@ logger = logging.getLogger("pipedesk.auth")
 
 # Role hierarchy: higher index = more privileges
 # This defines which roles can access which endpoints
+# Note: Some roles have variants (e.g., 'new_business' and 'newbusiness') for backward
+# compatibility with different naming conventions used in various parts of the system.
 ROLE_HIERARCHY = {
     "admin": 100,
-    "superadmin": 100,
-    "super_admin": 100,
+    "superadmin": 100,       # Variant of admin
+    "super_admin": 100,      # Variant of admin
     "manager": 75,
     "analyst": 50,
-    "new_business": 50,
-    "newbusiness": 50,
+    "new_business": 50,      # Preferred format
+    "newbusiness": 50,       # Legacy format - kept for compatibility
     "sales": 50,
     "authenticated": 25,
     "viewer": 10,
