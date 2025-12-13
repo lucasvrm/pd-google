@@ -531,10 +531,9 @@ class TestSLAWorkerIntegration:
         result1 = check_sla_breaches(db_session, threshold_days=3, actor_id=test_user.id)
         assert lead.id in result1["breached_leads"]
         
-        # Clear the tag for next test
-        db_session.query(models.LeadTag).filter(
-            models.LeadTag.lead_id == lead.id
-        ).delete()
+        # Clear the tag for next test using ORM relationship
+        db_session.refresh(lead)
+        lead.tags = [tag for tag in lead.tags if tag.name != "SLA Breach"]
         db_session.commit()
         
         # Run with 7-day threshold (should NOT breach)

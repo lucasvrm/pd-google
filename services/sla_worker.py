@@ -8,7 +8,7 @@ it's tagged as "SLA Breach" and an audit log is created.
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 import models
@@ -17,6 +17,42 @@ from services.audit_service import set_audit_actor, clear_audit_actor
 
 # Default SLA threshold in days
 DEFAULT_SLA_THRESHOLD_DAYS = 7
+
+
+def _ensure_timezone_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Ensure a datetime is timezone-aware.
+    
+    Args:
+        dt: Datetime that may or may not have timezone info
+        
+    Returns:
+        Timezone-aware datetime or None if input is None
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _calculate_days_since(reference_dt: datetime, target_dt: Optional[datetime]) -> int:
+    """
+    Calculate days between reference datetime and target datetime.
+    Handles timezone-aware and timezone-naive datetimes.
+    
+    Args:
+        reference_dt: Reference datetime (typically now)
+        target_dt: Target datetime to calculate difference from
+        
+    Returns:
+        Number of days between the two datetimes
+    """
+    if target_dt is None:
+        return 0
+    
+    aware_target = _ensure_timezone_aware(target_dt)
+    aware_reference = _ensure_timezone_aware(reference_dt)
+    
+    return (aware_reference - aware_target).days
 
 
 def check_sla_breaches(
@@ -104,10 +140,9 @@ def check_sla_breaches(
                     },
                     "threshold_days": threshold_days,
                     "last_interaction_at": lead.last_interaction_at.isoformat() if lead.last_interaction_at else None,
-                    "days_since_interaction": (
-                        (datetime.now(timezone.utc) - (lead.last_interaction_at if lead.last_interaction_at.tzinfo else lead.last_interaction_at.replace(tzinfo=timezone.utc))).days
-                        if lead.last_interaction_at
-                        else (datetime.now(timezone.utc) - (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc))).days
+                    "days_since_interaction": _calculate_days_since(
+                        datetime.now(timezone.utc),
+                        lead.last_interaction_at or lead.created_at
                     )
                 },
                 timestamp=datetime.now(timezone.utc)

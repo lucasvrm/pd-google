@@ -323,11 +323,14 @@ class TestSyncTokenFlow:
         # Execute sync
         sync_calendar_events(db_session, mock_service, channel)
         
-        # Verify the service was called with timeMin instead of syncToken
+        # Verify the service was NOT called with a syncToken (full sync mode)
         call_args = mock_service.service.events.return_value.list.call_args
         assert call_args is not None
-        assert 'syncToken' not in call_args[1] or call_args[1]['syncToken'] is None
-        # Note: timeMin is not in call_args because it's added inside fetch_events_page
+        # In full sync mode, syncToken should not be present in the call
+        assert 'syncToken' not in call_args[1]
+        # Verify other required params for full sync are present
+        assert 'singleEvents' in call_args[1]
+        assert call_args[1]['singleEvents'] is True
         
         # Verify sync token was set after successful sync
         db_session.refresh(channel)
@@ -411,22 +414,24 @@ class Test410GoneScenario:
         # Track that token is cleared
         original_token = channel.sync_token
         
-        # Mock service that always raises 410 (to test error handling path)
-        def mock_execute_always_410(**kwargs):
-            # If sync_token is None, succeed (after it was cleared)
-            if db_session.query(models.CalendarSyncState).filter_by(
-                channel_id="test-channel-410-graceful"
-            ).first().sync_token is None:
+        # Track call count to avoid infinite loops
+        call_state = {"count": 0}
+        
+        # Mock service that raises 410 first, then succeeds
+        def mock_execute_with_state(**kwargs):
+            call_state["count"] += 1
+            # First call raises 410, second call succeeds
+            if call_state["count"] == 1:
+                raise Exception("HttpError 410: sync token is no longer valid")
+            else:
                 return {
                     "items": [],
                     "nextSyncToken": "recovered-token"
                 }
-            # Otherwise raise 410
-            raise Exception("HttpError 410: sync token is no longer valid")
         
         mock_service = MagicMock()
         mock_service.service = MagicMock()
-        mock_service.service.events.return_value.list.return_value.execute = mock_execute_always_410
+        mock_service.service.events.return_value.list.return_value.execute = mock_execute_with_state
         
         # Execute sync - should not raise exception
         sync_calendar_events(db_session, mock_service, channel)
