@@ -261,6 +261,10 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
 def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: models.CalendarSyncState):
     """
     Core Two-Way Sync Logic using Sync Token for Calendar.
+    
+    This function performs incremental sync using sync tokens when available.
+    If the sync token is invalid (410 error), it performs a full re-sync
+    by fetching all future events.
     """
     calendar_logger.info(
         action="sync",
@@ -271,23 +275,45 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
 
     page_token = None
     new_sync_token = None
+    total_events_processed = 0
     
     # Wrapper function for the API call with retry
     @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
-    def fetch_events_page(calendar_id, sync_token, page_token):
-        return service.service.events().list(
-            calendarId=calendar_id,
-            syncToken=sync_token,
-            pageToken=page_token,
-            singleEvents=True
-        ).execute()
+    def fetch_events_page(calendar_id, sync_token, page_token, time_min=None):
+        """
+        Fetch a page of calendar events.
+        Uses sync token if available, otherwise uses time-based filtering for full sync.
+        """
+        params = {
+            'calendarId': calendar_id,
+            'pageToken': page_token
+        }
+        
+        if sync_token:
+            # Incremental sync with sync token
+            params['syncToken'] = sync_token
+            params['singleEvents'] = True
+        else:
+            # Full sync: fetch all future events
+            params['singleEvents'] = True
+            params['orderBy'] = 'startTime'
+            if time_min:
+                params['timeMin'] = time_min
+        
+        return service.service.events().list(**params).execute()
     
     while True:
         try:
+            # For full re-sync, get all events from now onwards
+            time_min = None
+            if not channel.sync_token:
+                time_min = datetime.now(timezone.utc).isoformat()
+            
             result = fetch_events_page(
                 calendar_id=channel.calendar_id,
                 sync_token=channel.sync_token,
-                page_token=page_token
+                page_token=page_token,
+                time_min=time_min
             )
         except Exception as e:
             error_msg = str(e)
@@ -295,11 +321,14 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 calendar_logger.warning(
                     action="sync",
                     status="warning",
-                    message="Sync token invalid (410). Performing full sync.",
+                    message="Sync token invalid (410). Performing full re-sync.",
                     error_type="SyncTokenExpired"
                 )
+                # Clear the sync token to trigger full re-sync
                 channel.sync_token = None
+                page_token = None  # Reset pagination
                 db.commit()
+                # Continue to retry with full sync
                 continue
             else:
                 calendar_logger.error(
@@ -310,6 +339,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 raise e
 
         items = result.get('items', [])
+        total_events_processed += len(items)
         
         for item in items:
             google_id = item.get('id')
@@ -322,6 +352,11 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
             if status == 'cancelled':
                 if local_event:
                     local_event.status = 'cancelled'
+                    calendar_logger.info(
+                        action="sync_event",
+                        status="cancelled",
+                        message=f"Marked event {google_id} as cancelled"
+                    )
             else:
                 summary = item.get('summary')
                 description = item.get('description')
@@ -340,6 +375,17 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                         calendar_id=channel.calendar_id
                     )
                     db.add(local_event)
+                    calendar_logger.info(
+                        action="sync_event",
+                        status="created",
+                        message=f"Created new local event for {google_id}"
+                    )
+                else:
+                    calendar_logger.info(
+                        action="sync_event",
+                        status="updated",
+                        message=f"Updated local event {google_id}"
+                    )
 
                 local_event.summary = summary
                 local_event.description = description
@@ -351,12 +397,16 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 local_event.organizer_email = organizer
                 local_event.attendees = json.dumps(item.get('attendees', []))
         
+        # Commit after each page to avoid losing work if later pages fail
+        db.commit()
+        
         page_token = result.get('nextPageToken')
         new_sync_token = result.get('nextSyncToken')
         
         if not page_token:
             break
 
+    # Update the sync token after successful sync
     if new_sync_token:
         channel.sync_token = new_sync_token
         channel.updated_at = datetime.now(timezone.utc)
@@ -364,8 +414,15 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         calendar_logger.info(
             action="sync",
             status="success",
-            message=f"Sync complete. Processed {len(items) if items else 0} items.",
+            message=f"Sync complete. Processed {total_events_processed} events.",
+            events_processed=total_events_processed,
             new_sync_token=bool(new_sync_token)
+        )
+    else:
+        calendar_logger.warning(
+            action="sync",
+            status="warning",
+            message="Sync complete but no new sync token received."
         )
 
 
