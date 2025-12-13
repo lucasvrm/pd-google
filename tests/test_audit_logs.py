@@ -215,8 +215,8 @@ class TestLeadAuditLogs:
         assert changes["title"]["old"] == "Original Title"
         assert changes["title"]["new"] == "Updated Title"
         assert "priority_score" in changes
-        assert changes["priority_score"]["old"] == "3"
-        assert changes["priority_score"]["new"] == "8"
+        assert changes["priority_score"]["old"] == 3  # Now preserved as int
+        assert changes["priority_score"]["new"] == 8
         
         clear_audit_actor()
 

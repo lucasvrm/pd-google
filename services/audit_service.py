@@ -75,7 +75,7 @@ LEAD_AUDIT_FIELDS: Set[str] = {
 }
 
 DEAL_AUDIT_FIELDS: Set[str] = {
-    "title",  # Maps to client_name column
+    "title",  # Attribute name (maps to 'client_name' database column in Deal model)
     "company_id",
 }
 
@@ -118,9 +118,15 @@ def extract_changes(target, tracked_fields: Set[str]) -> Dict[str, Dict[str, Any
             
             # Only record if there's an actual change
             if old_value != new_value:
+                # Preserve data types for primitives, convert complex objects to strings
+                def serialize_value(val):
+                    if val is None or isinstance(val, (str, int, float, bool)):
+                        return val
+                    return str(val)
+                
                 changes[field] = {
-                    "old": str(old_value) if old_value is not None else None,
-                    "new": str(new_value) if new_value is not None else None,
+                    "old": serialize_value(old_value),
+                    "new": serialize_value(new_value),
                 }
     
     return changes
@@ -183,7 +189,12 @@ def _log_lead_changes(mapper, connection, target):
     if "lead_status_id" in changes:
         action = "status_change"
     
-    # Insert directly via connection to avoid flush cycle issues
+    # Insert directly via connection to avoid flush cycle issues.
+    # Using session.add() during a before_update event can cause
+    # "Usage of the 'Session.add()' operation is not currently supported
+    # within the execution stage of the flush process" warnings.
+    # Direct connection execution ensures the audit log is created
+    # in the same transaction without interfering with the flush.
     timestamp = datetime.now(timezone.utc)
     actor_id = get_audit_actor()
     

@@ -37,16 +37,16 @@ CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp);
 The system uses SQLAlchemy's event system to automatically detect changes:
 
 ```python
-@event.listens_for(Lead, "after_update", propagate=True)
+@event.listens_for(Lead, "before_update", propagate=True)
 def _log_lead_changes(mapper, connection, target):
-    # Automatically called whenever a Lead is updated
+    # Automatically called whenever a Lead is about to be updated
     # Extracts changes and creates audit log entry
     ...
 ```
 
 Event hooks are registered for:
-- `Lead` model: `after_insert`, `after_update`
-- `Deal` model: `after_insert`, `after_update`
+- `Lead` model: `after_insert`, `before_update`
+- `Deal` model: `after_insert`, `before_update`
 
 ### 2. Change Detection
 
