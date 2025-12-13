@@ -2,41 +2,35 @@ import os
 
 class Config:
     # --- DATABASE ---
-    # É fundamental ler isso aqui para centralizar a configuração, 
-    # embora o database.py também possa ler diretamente.
+    # Render injeta esta variável automaticamente.
     DATABASE_URL = os.getenv("DATABASE_URL")
 
     # --- GOOGLE AUTH & DRIVE ---
     GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     USE_MOCK_DRIVE = os.getenv("USE_MOCK_DRIVE", "false").lower() == "true"
-    DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", None) # Optional: isolar arquivos numa pasta raiz
+    DRIVE_ROOT_FOLDER_ID = os.getenv("DRIVE_ROOT_FOLDER_ID", None)
     
-    # --- WEBHOOKS & AUTOMAÇÃO ---
-    # URL pública do backend (Necessária para o Google enviar notificações para nós)
-    WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "http://localhost:8000")
-    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", None)  # Opcional: segurança extra
+    # --- WEBHOOKS (Google Drive & Calendar & Gmail) ---
+    # URL pública do backend para o Google enviar notificações.
+    # Já deixei o seu URL real como padrão, mas é BOA PRÁTICA manter no Env Var do Render também.
+    WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://google-api-xwhd.onrender.com")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", None)
     
-    # --- REDIS CACHE (Upstash/Render Key Value) ---
+    # --- REDIS CACHE ---
     REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
     REDIS_CACHE_ENABLED = os.getenv("REDIS_CACHE_ENABLED", "true").lower() == "true"
-    REDIS_DEFAULT_TTL = int(os.getenv("REDIS_DEFAULT_TTL", "180"))  # 3 minutos padrão
+    REDIS_DEFAULT_TTL = int(os.getenv("REDIS_DEFAULT_TTL", "180"))
     
     # --- CORS (Segurança do Frontend) ---
-    # Adicione aqui a URL do seu frontend em produção (Vercel, etc)
-    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://pipedesk.vercel.app")
+    # Adicionei o seu frontend da Vercel e localhost para desenvolvimento.
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "https://pipedesk.vercel.app,http://localhost:5173,http://127.0.0.1:5173")
     
-    # --- CALENDAR & SLA (Novas Features) ---
-    # Quanto tempo manter eventos passados no banco local
+    # --- CALENDAR & SLA ---
     CALENDAR_EVENT_RETENTION_DAYS = int(os.getenv("CALENDAR_EVENT_RETENTION_DAYS", "180"))
-    
-    # [NOVO] Limite de horas para considerar um lead como "atrasado" (SLA Breach)
-    # Se não configurado no Render, assume 48 horas.
     SLA_BREACH_THRESHOLD_HOURS = int(os.getenv("SLA_BREACH_THRESHOLD_HOURS", "48"))
 
-    # --- FEATURE FLAGS & SYSTEM ---
-    # Scheduler para rodar o worker de SLA e limpeza
+    # --- FEATURE FLAGS ---
     SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
-    # Rodar migrações ao iniciar (útil no Render para não precisar rodar manualmente)
     RUN_MIGRATIONS_ON_STARTUP = os.getenv("RUN_MIGRATIONS_ON_STARTUP", "true").lower() == "true"
 
 config = Config()
