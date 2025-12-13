@@ -50,10 +50,10 @@ This document outlines the comprehensive execution plan for integrating the `pd-
 
 ---
 
-### Phase 2: CRM Core - Audit & Security (HIGH PRIORITY 🔴)
+### Phase 2: CRM Core - Audit & Security (HIGH PRIORITY 🟡)
 **Objective:** Implement comprehensive audit logging and real RBAC security for enterprise CRM operations.
 
-**Status:** 🟡 **PARTIALLY COMPLETE - AUDIT LOGS IMPLEMENTED**
+**Status:** 🟡 **MOSTLY COMPLETE - AUDIT LOGS + RBAC IMPLEMENTED**
 
 *   **Tasks:**
     1.  **Audit Log Models:** ✅ **COMPLETE**
@@ -76,14 +76,16 @@ This document outlines the comprehensive execution plan for integrating the `pd-
             - Change extraction utilities
             - Registration function for event listeners
     
-    3.  **RBAC Implementation:** 🔴 **PENDING**
-        *   Create `services/rbac_service.py` with JWT validation
-        *   Implement FastAPI dependencies for role checking:
+    3.  **RBAC Implementation:** ✅ **COMPLETE**
+        *   Enhanced `auth/dependencies.py` with role-based dependencies:
+            - `get_current_user_with_role(["admin", "manager"])` - Factory for role checking
             - `require_admin()` - Admin-only endpoints
-            - `require_manager()` - Manager and above
-            - `require_authenticated()` - Any authenticated user
-        *   Add JWT token validation (not just header reading)
-        *   Create role hierarchy: Admin > Manager > Sales > Viewer
+            - `require_manager_or_above()` - Manager and above
+            - `require_writer_or_above()` - Sales/analyst level and above
+        *   JWT token validation already implemented in `auth/jwt.py`
+        *   Role hierarchy defined: Admin (100) > Manager (75) > Analyst/Sales (50) > Viewer (10)
+        *   Protected destructive operations (delete folder) with manager+ requirement
+        *   Access denial logging for security auditing
     
     4.  **Audit Log API:** 🔴 **PENDING**
         *   Create `routers/audit_logs.py` with endpoints:
@@ -92,19 +94,21 @@ This document outlines the comprehensive execution plan for integrating the `pd-
             - GET `/audit-logs/user/{user_id}` - Get logs by user
         *   Implement filtering by date range, entity type, action type
     
-    5.  **Security Middleware:** 🔴 **PENDING**
-        *   Add JWT validation middleware to main.py
-        *   Implement rate limiting for API endpoints
-        *   Add request logging for security monitoring
+    5.  **Security Middleware:** 🟡 **PARTIALLY COMPLETE**
+        *   ✅ JWT validation in `auth/dependencies.py`
+        *   ✅ RBAC dependencies for role checking
+        *   ✅ Access denial logging
+        *   🔴 Rate limiting for API endpoints (pending)
+        *   🔴 Additional request logging for security monitoring (pending)
 
 *   **Dependencies:** JWT token configuration in Supabase, User management setup
 *   **Completion Criteria:** 
     - ✅ All Lead/Deal changes automatically logged
-    - 🔴 JWT tokens properly validated
-    - 🔴 Role-based access control functional
+    - ✅ JWT tokens properly validated
+    - ✅ Role-based access control functional
     - 🔴 Audit logs queryable via API
 *   **Risks:** Performance impact on high-volume operations (mitigate with async logging)
-*   **Documentation:** ✅ `docs/backend/audit_system.md` created
+*   **Documentation:** ✅ `docs/backend/audit_system.md` created, ✅ `docs/backend/jwt_auth.md` updated
 
 ---
 
@@ -497,18 +501,19 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 
 ## Next Immediate Actions
 
-### For Phase 2 (Audit & Security) - IN PROGRESS 🟡
+### For Phase 2 (Audit & Security) - MOSTLY COMPLETE 🟡
 1.  ✅ Create `AuditLog` model in `models.py`
 2.  ✅ Implement SQLAlchemy event listeners for Lead/Deal models
 3.  ✅ Create `services/audit_service.py` with event hooks and context management
 4.  ✅ Register event listeners in `main.py` startup
 5.  ✅ Write tests for audit logging in `tests/test_audit_logs.py`
 6.  ✅ Create `docs/backend/audit_system.md` documentation
-7.  🔴 Create `services/rbac_service.py` with JWT validation
-8.  🔴 Add RBAC dependencies to existing endpoints
-9.  🔴 Create `routers/audit_logs.py` with admin-only endpoints
-10. 🔴 Write tests for RBAC functionality
-11. 🔴 Update remaining documentation
+7.  ✅ Enhanced `auth/dependencies.py` with RBAC functions (role hierarchy, `get_current_user_with_role()`)
+8.  ✅ Protected destructive endpoints (delete folder) with RBAC
+9.  ✅ Added auth dependency to timeline router
+10. ✅ Write tests for RBAC functionality in `tests/test_rbac.py`
+11. ✅ Updated `README.md` and `ACTION_PLAN.md` documentation
+12. 🔴 Create `routers/audit_logs.py` with admin-only endpoints (optional future)
 
 ### For Phase 3 (Unified Timeline) - COMPLETE ✅
 1.  ✅ Created `routers/timeline.py` with timeline endpoint (aggregation logic included)

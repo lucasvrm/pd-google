@@ -9,7 +9,7 @@ from services.permission_service import PermissionService
 from services.hierarchy_service import HierarchyService
 from services.search_service import SearchService
 from cache import cache_service
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, get_current_user_with_role, require_manager_or_above
 from auth.jwt import UserContext
 import models
 from typing import List, Dict, Any, Optional, Literal, Union
@@ -774,28 +774,22 @@ def soft_delete_folder(
     folder_id: str,
     reason: Optional[str] = Query(default=None, description="Reason for deleting the folder"),
     db: Session = Depends(get_db),
-    current_user: UserContext = Depends(get_current_user),
+    current_user: UserContext = Depends(get_current_user_with_role(["admin", "superadmin", "super_admin", "manager"])),
 ):
     """
     Soft delete a folder - marks it as deleted without removing from Google Drive.
-    Requires write permission (writer or owner role).
+    
+    **RBAC:** Requires admin or manager role (destructive operation).
+    Only admins and managers can delete folders for security purposes.
     """
     allowed_types = ["company", "lead", "deal"]
     if entity_type not in allowed_types:
         raise HTTPException(status_code=400, detail=f"Invalid entity_type. Allowed: {allowed_types}")
 
-    # 1. Check permission - only writer/owner can delete
-    perm_service = PermissionService(db)
-    permission = perm_service.get_drive_permission_from_app_role(
-        current_user.role, entity_type
-    )
+    # Note: RBAC is enforced at dependency level via get_current_user_with_role
+    # Only admin/manager roles can reach this point
 
-    if permission == "reader":
-        raise HTTPException(
-            status_code=403, detail="User does not have permission to delete folders"
-        )
-
-    # 2. Verify entity folder exists (validates entity_type and entity_id mapping)
+    # 1. Verify entity folder exists (validates entity_type and entity_id mapping)
     entity_folder = (
         db.query(models.DriveFolder)
         .filter(
@@ -811,14 +805,14 @@ def soft_delete_folder(
             detail="Entity folder not found. The entity may not have been initialized.",
         )
 
-    # 3. Prevent deleting the entity's root folder
+    # 2. Prevent deleting the entity's root folder
     if folder_id == entity_folder.folder_id:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete the entity's root folder. Only subfolders can be deleted.",
         )
 
-    # 4. Find the folder in database
+    # 3. Find the folder in database
     folder_record = db.query(models.DriveFolder).filter(models.DriveFolder.folder_id == folder_id).first()
 
     # Note: Subfolders might not be tracked in DriveFolder table, they could be in Drive only
@@ -853,18 +847,18 @@ def soft_delete_folder(
             "note": "Folder was not tracked in database but soft delete was logged",
         }
 
-    # 5. Check if already deleted
+    # 4. Check if already deleted
     if folder_record.deleted_at:
         raise HTTPException(status_code=400, detail="Folder is already marked as deleted")
 
-    # 6. Mark as deleted (soft delete)
+    # 5. Mark as deleted (soft delete)
     folder_record.deleted_at = datetime.now(timezone.utc)
     folder_record.deleted_by = current_user.id
     folder_record.delete_reason = reason
 
     db.commit()
 
-    # 7. Log to audit log (DriveChangeLog)
+    # 6. Log to audit log (DriveChangeLog)
     audit_metadata = {
         "user_id": current_user.id,
         "user_role": current_user.role,
@@ -881,7 +875,7 @@ def soft_delete_folder(
     db.add(audit_entry)
     db.commit()
 
-    # 8. Invalidate cache for the parent folder
+    # 7. Invalidate cache for the parent folder
     cache_service.invalidate_cache(f"drive:list_files:{entity_folder.folder_id}*")
 
     return {

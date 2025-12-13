@@ -13,7 +13,7 @@ To enable JWT verification, you must set the following environment variable:
 The authentication logic is located in the `auth/` directory:
 
 - `auth/jwt.py`: Handles low-level JWT decoding and verification.
-- `auth/dependencies.py`: Provides the FastAPI dependency `get_current_user`.
+- `auth/dependencies.py`: Provides the FastAPI dependencies for authentication and RBAC.
 
 ### UserContext
 
@@ -43,9 +43,77 @@ class UserContext:
 
 3.  **Failure**: If neither are present, raises `401 Unauthorized`.
 
+## Role-Based Access Control (RBAC)
+
+The system implements RBAC with a role hierarchy to protect sensitive endpoints.
+
+### Role Hierarchy
+
+Roles are assigned privilege levels (higher = more access):
+
+| Role | Level | Description |
+|------|-------|-------------|
+| `admin`, `superadmin`, `super_admin` | 100 | Full system access |
+| `manager` | 75 | Team management, destructive operations |
+| `analyst`, `new_business`, `sales` | 50 | Standard write access |
+| `authenticated` | 25 | Basic authenticated access |
+| `viewer`, `client`, `customer`, `reader` | 10 | Read-only access |
+
+### RBAC Dependencies
+
+#### `get_current_user_with_role(required_roles)`
+
+Factory function to create a dependency that checks user roles:
+
+```python
+from auth.dependencies import get_current_user_with_role
+from auth.jwt import UserContext
+
+@router.delete("/sensitive-endpoint")
+def delete_something(
+    current_user: UserContext = Depends(get_current_user_with_role(["admin", "manager"]))
+):
+    # Only admin or manager can access this endpoint
+    pass
+```
+
+#### Convenience Dependencies
+
+Pre-configured dependencies for common access patterns:
+
+```python
+from auth.dependencies import require_admin, require_manager_or_above, require_writer_or_above
+
+# Admin only (admin, superadmin, super_admin)
+@router.post("/admin-only")
+def admin_only(user: UserContext = Depends(require_admin)):
+    pass
+
+# Manager or above (includes admin)
+@router.delete("/manager-action")
+def manager_action(user: UserContext = Depends(require_manager_or_above)):
+    pass
+
+# Writer or above (includes manager, admin)
+@router.post("/create-item")
+def create_item(user: UserContext = Depends(require_writer_or_above)):
+    pass
+```
+
+### Protected Endpoints
+
+The following endpoints are protected with RBAC:
+
+| Endpoint | Required Role | Description |
+|----------|--------------|-------------|
+| `DELETE /drive/.../folders/{id}` | admin, manager | Destructive folder deletion |
+| `GET /api/timeline/{type}/{id}` | authenticated | Timeline access (any user) |
+
 ## Usage in FastAPI
 
-To protect a route, inject the `get_current_user` dependency:
+### Basic Authentication
+
+To protect a route with basic authentication:
 
 ```python
 from fastapi import APIRouter, Depends
@@ -60,6 +128,21 @@ def protected_route(user: UserContext = Depends(get_current_user)):
         "message": f"Hello, user {user.id}",
         "role": user.role
     }
+```
+
+### Role-Based Protection
+
+To require specific roles:
+
+```python
+from auth.dependencies import get_current_user_with_role
+
+@router.delete("/critical-endpoint")
+def critical_endpoint(
+    user: UserContext = Depends(get_current_user_with_role(["admin"]))
+):
+    # Only admins can reach here
+    return {"message": "Admin action performed"}
 ```
 
 ## Example Requests
@@ -77,4 +160,12 @@ Authorization: Bearer <SUPABASE_JWT_TOKEN>
 GET /some/path HTTP/1.1
 x-user-id: 123e4567-e89b-12d3-a456-426614174000
 x-user-role: authenticated
+```
+
+## Security Logging
+
+Access denials are logged for security monitoring:
+
+```
+WARNING pipedesk.auth: Access denied: user abc123 with role 'viewer' attempted to access endpoint requiring one of ['admin', 'manager']
 ```
