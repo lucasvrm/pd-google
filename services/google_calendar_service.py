@@ -1,11 +1,19 @@
 from typing import Dict, Any, List, Optional
+from sqlalchemy.orm import Session
 from services.google_auth import GoogleAuthService
 from utils.retry import exponential_backoff_retry
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 class GoogleCalendarService:
-    def __init__(self):
+    def __init__(self, db: Session):
+        """
+        Initialize Google Calendar Service with database session.
+        
+        Args:
+            db: SQLAlchemy database session for persistence operations
+        """
+        self.db = db
         self.auth_service = GoogleAuthService(scopes=SCOPES)
         self.service = self.auth_service.get_service('calendar', 'v3')
 

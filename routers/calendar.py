@@ -24,14 +24,17 @@ def get_db():
     finally:
         db.close()
 
-def get_calendar_service():
-    if config.USE_MOCK_DRIVE: # Assuming we might want a mock calendar too, but for now using real or failing
-         # For MVP, if Mock Drive is used, we might just fail Calendar or need a MockCalendarService
-         # But the requirement is integration with Google.
-         # We'll use the Real service if creds exist, else it might fail.
-         # For safety, let's use the real service class which checks creds inside.
-         return GoogleCalendarService()
-    return GoogleCalendarService()
+def get_calendar_service(db: Session = Depends(get_db)):
+    """
+    Dependency to get Calendar Service instance with database session.
+    
+    Args:
+        db: Database session from get_db dependency
+        
+    Returns:
+        GoogleCalendarService instance configured with database access
+    """
+    return GoogleCalendarService(db)
 
 # Pydantic Models
 class Attendee(BaseModel):

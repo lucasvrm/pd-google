@@ -100,11 +100,23 @@ The calendar functionality is implemented through the `GoogleCalendarService` cl
 
 #### GoogleCalendarService Methods
 
-##### `__init__()`
-Initializes the service with Google Service Account authentication.
-- **Scopes:** `https://www.googleapis.com/auth/calendar`
-- **Authentication:** Uses `GoogleAuthService` with service account credentials
-- **Returns:** Service instance ready for API calls
+##### `__init__(db: Session)`
+Initializes the service with database session and Google Service Account authentication.
+
+**Parameters:**
+- `db` (Session): SQLAlchemy database session for persistence operations
+
+**Scopes:** `https://www.googleapis.com/auth/calendar`
+**Authentication:** Uses `GoogleAuthService` with service account credentials
+**Returns:** Service instance ready for API calls with database access
+
+**Example:**
+```python
+from database import SessionLocal
+
+db = SessionLocal()
+service = GoogleCalendarService(db)
+```
 
 ##### `create_event(event_data: Dict, calendar_id: str = 'primary') -> Dict`
 Creates a new event in the specified calendar.

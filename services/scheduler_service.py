@@ -16,30 +16,16 @@ logger = logging.getLogger("pipedesk_drive.scheduler")
 class SchedulerService:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
-        self._calendar_service = None
 
-    @property
-    def calendar_service(self):
-        """Lazy load calendar service"""
-        if self._calendar_service is None:
-            self._calendar_service = GoogleCalendarService()
-        return self._calendar_service
+    def get_calendar_service(self, db: Session) -> GoogleCalendarService:
+        """Get calendar service instance with database session"""
+        return GoogleCalendarService(db)
 
     def start(self):
         """
         Start the scheduler and add jobs.
         """
         if not self.scheduler.running:
-            # Initialize services that might be heavy
-            if self._calendar_service is None:
-                try:
-                    # Accessing property triggers initialization
-                    _ = self.calendar_service
-                except Exception as e:
-                    logger.error(f"Failed to initialize Calendar Service for Scheduler: {e}")
-                    # Decide if we should raise or continue (maybe continue but skip calendar jobs?)
-                    # For now, we'll continue and let jobs fail individually if service is bad
-
             # Check for expiring channels every 6 hours
             self.scheduler.add_job(
                 self.renew_channels_job,
@@ -151,9 +137,11 @@ class SchedulerService:
         """
         Renew a specific calendar channel by stopping it and starting a new one.
         """
+        calendar_service = self.get_calendar_service(db)
+        
         # 1. Stop old channel (Best effort)
         try:
-            self.calendar_service.stop_channel(channel.channel_id, channel.resource_id)
+            calendar_service.stop_channel(channel.channel_id, channel.resource_id)
         except Exception as e:
             logger.warning(f"Failed to stop old channel {channel.channel_id}: {e}")
 
@@ -165,7 +153,7 @@ class SchedulerService:
         # 7 days from now
         expiration_ms = int((datetime.now().timestamp() + 7 * 24 * 3600) * 1000)
 
-        response = self.calendar_service.watch_events(
+        response = calendar_service.watch_events(
             channel_id=new_channel_id,
             webhook_url=webhook_url,
             calendar_id=channel.calendar_id,

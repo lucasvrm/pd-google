@@ -56,7 +56,7 @@ class HealthService:
 
     def _check_calendar_connectivity(self) -> Dict[str, Optional[str]]:
         try:
-            calendar_service = GoogleCalendarService()
+            calendar_service = GoogleCalendarService(self.db)
             if not calendar_service.service:
                 return {"reachable": False, "detail": "Calendar service not initialized"}
 

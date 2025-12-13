@@ -240,7 +240,7 @@ async def handle_calendar_webhook(db: Session, channel: models.CalendarSyncState
 
     # Trigger Sync Logic
     try:
-        service = GoogleCalendarService()
+        service = GoogleCalendarService(db)
         sync_calendar_events(db, service, channel)
         calendar_logger.info(
             action="webhook_sync",
