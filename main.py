@@ -14,6 +14,7 @@ from routers import (
     crm_communication,
     tasks,
     leads,
+    timeline,
 )
 from database import engine
 import models
@@ -182,6 +183,7 @@ app.include_router(crm_communication.router, prefix="/api")
 app.include_router(tasks.router)
 app.include_router(health.router)
 app.include_router(leads.router)
+app.include_router(timeline.router)
 
 
 @app.get("/metrics")
