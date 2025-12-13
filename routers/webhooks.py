@@ -275,6 +275,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
 
     page_token = None
     new_sync_token = None
+    total_events_processed = 0
     
     # Wrapper function for the API call with retry
     @exponential_backoff_retry(max_retries=3, initial_delay=1.0)
@@ -338,6 +339,7 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
                 raise e
 
         items = result.get('items', [])
+        total_events_processed += len(items)
         
         for item in items:
             google_id = item.get('id')
@@ -412,7 +414,8 @@ def sync_calendar_events(db: Session, service: GoogleCalendarService, channel: m
         calendar_logger.info(
             action="sync",
             status="success",
-            message=f"Sync complete. Updated sync token.",
+            message=f"Sync complete. Processed {total_events_processed} events.",
+            events_processed=total_events_processed,
             new_sync_token=bool(new_sync_token)
         )
     else:
