@@ -208,27 +208,36 @@ CREATE TABLE audit_logs (
     before_values JSONB,
     after_values JSONB,
     ip_address INET,
-    user_agent TEXT,
-    INDEX idx_entity (entity_type, entity_id),
-    INDEX idx_user (user_id),
-    INDEX idx_timestamp (timestamp)
+    user_agent TEXT
 );
 
+-- Indexes for performance
+CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_timestamp ON audit_logs(timestamp);
+
+-- Specialized tables
 CREATE TABLE lead_audit_logs (
     -- Specialized audit log for leads with additional context
+    -- (extends audit_logs with lead-specific fields)
 );
 
 CREATE TABLE deal_audit_logs (
     -- Specialized audit log for deals with additional context
+    -- (extends audit_logs with deal-specific fields)
 );
 ```
 
 #### Phase 3 (Timeline)
 ```sql
--- Indexes for timeline performance
+-- Composite indexes for timeline performance
+-- Optimized for entity-specific timeline queries
 CREATE INDEX idx_calendar_events_timeline ON calendar_events(start_time DESC);
 CREATE INDEX idx_emails_timeline ON emails(timestamp DESC);
-CREATE INDEX idx_audit_logs_timeline ON audit_logs(timestamp DESC);
+CREATE INDEX idx_audit_timeline_composite ON audit_logs(entity_type, entity_id, timestamp DESC);
+
+-- Additional indexes for filtering
+CREATE INDEX idx_calendar_events_entity ON calendar_events(entity_type, entity_id, start_time DESC);
 ```
 
 ### API Changes

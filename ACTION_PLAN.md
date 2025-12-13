@@ -68,8 +68,10 @@ This document outlines the comprehensive execution plan for integrating the `pd-
     
     2.  **SQLAlchemy Event Hooks:**
         *   Implement `@event.listens_for` hooks on Lead and Deal models
+        *   Listen for specific events: `before_update`, `before_insert`, `before_delete`
         *   Capture before_update, before_insert, before_delete events
         *   Automatically log all field changes with old and new values
+        *   Optimize by only capturing tracked fields to minimize performance impact
     
     3.  **RBAC Implementation:**
         *   Create `services/rbac_service.py` with JWT validation
@@ -384,7 +386,8 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 *   `SUPABASE_KEY` - Supabase API key
 *   `WEBHOOK_BASE_URL` - Public webhook URL for Google notifications
 *   `WEBHOOK_SECRET` - Secret token for webhook validation
-*   `JWT_SECRET` - Secret for JWT token validation (Phase 2)
+*   `SUPABASE_JWT_SECRET` - Supabase JWT signing secret (or public key for RS256 verification)
+*   **Note:** For production, use RS256 (RSA signatures) with Supabase's public keys instead of HS256 (HMAC)
 
 ### Python Dependencies
 *   `fastapi` - Web framework
