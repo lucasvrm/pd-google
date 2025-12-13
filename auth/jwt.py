@@ -30,8 +30,11 @@ def verify_supabase_jwt(token: str) -> Optional[UserContext]:
         jwt.InvalidTokenError: If the token is invalid (bad signature, etc).
     """
     secret = config.SUPABASE_JWT_SECRET
-    if not secret:
-        logger.warning("SUPABASE_JWT_SECRET is not configured. JWT authentication is disabled.")
+    
+    # Defensive check: Ensure JWT secret is configured
+    if not secret or (isinstance(secret, str) and secret.strip() == ""):
+        logger.critical("FATAL: SUPABASE_JWT_SECRET is not set in config!")
+        logger.warning("JWT authentication is disabled. Falling back to legacy auth if available.")
         return None
 
     # Debug log: show last 4 characters of the secret for verification (never log full secret)
@@ -59,6 +62,11 @@ def verify_supabase_jwt(token: str) -> Optional[UserContext]:
         raise
     except jwt.InvalidTokenError as e:
         logger.error(f"JWT Error: Invalid token. Details: {e}")
+        raise
+    except Exception as e:
+        # Catch-all for unexpected errors during JWT decode
+        logger.error(f"JWT Decode Crash: Unexpected error during token verification - {str(e)}")
+        logger.exception("Full traceback:")
         raise
 
     # Extract standard claims

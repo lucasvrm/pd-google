@@ -389,6 +389,9 @@ def get_timeline(
             entity_id=entity_id,
             error=str(e)
         )
+        # Log full traceback for debugging
+        import traceback
+        timeline_logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch timeline: {str(e)}"
