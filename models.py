@@ -119,6 +119,24 @@ class Contact(Base):
     name = Column(String)
     email = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+
+
+class LeadContact(Base):
+    """
+    Junction table mapping leads to contacts.
+    Tracks which contacts are associated with which leads,
+    and which contact is the primary one for each lead.
+    """
+    __tablename__ = "lead_contacts"
+
+    lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
+    contact_id = Column(String, ForeignKey("contacts.id"), primary_key=True)
+    is_primary = Column(Boolean, default=False)
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    contact = relationship("Contact")
 
 
 class LeadStatus(Base):

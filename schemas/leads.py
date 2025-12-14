@@ -16,6 +16,7 @@ class TagItem(BaseModel):
 
 
 class PrimaryContact(BaseModel):
+    id: Optional[str] = None
     name: Optional[str] = None
     role: Optional[str] = None
 

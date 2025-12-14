@@ -428,6 +428,34 @@ def sales_view(
                         entity_tags_lookup[entity_tag.entity_id] = []
                     entity_tags_lookup[entity_tag.entity_id].append(tag)
 
+            # Pre-fetch primary contacts from lead_contacts + contacts for all leads
+            primary_contacts_lookup: dict = {}
+            if lead_ids:
+                try:
+                    lead_contacts_rows = (
+                        db.query(models.LeadContact, models.Contact)
+                        .join(models.Contact, models.Contact.id == models.LeadContact.contact_id)
+                        .filter(models.LeadContact.lead_id.in_(lead_ids))
+                        .order_by(
+                            models.LeadContact.is_primary.desc(),
+                            models.LeadContact.added_at.asc(),
+                        )
+                        .all()
+                    )
+                    for lead_contact, contact in lead_contacts_rows:
+                        # Only store the first contact per lead (is_primary=true takes precedence due to ordering)
+                        if lead_contact.lead_id not in primary_contacts_lookup:
+                            primary_contacts_lookup[lead_contact.lead_id] = contact
+                except Exception as contact_exc:
+                    # Log error but continue (primary_contact is optional)
+                    sales_view_logger.warning(
+                        action="sales_view_contacts_warning",
+                        message="Failed to fetch lead contacts. Continuing without primary contacts.",
+                        route=sales_view_route_id,
+                        error_type=type(contact_exc).__name__,
+                        error=str(contact_exc),
+                    )
+
         except (ProgrammingError, PsycopgError, Exception) as query_exc:
             sales_view_metrics["errors"] += 1
             sales_view_logger.error(
@@ -507,6 +535,16 @@ def sales_view(
                         name=lead.owner.name,
                     )
 
+                # Get primary contact from pre-fetched lookup
+                primary_contact: Optional[PrimaryContact] = None
+                contact = primary_contacts_lookup.get(lead.id)
+                if contact:
+                    primary_contact = PrimaryContact(
+                        id=str(contact.id) if contact.id is not None else None,
+                        name=contact.name,
+                        role=contact.role,
+                    )
+
                 items.append(
                     LeadSalesViewItem(
                         id=str(lead.id),  # Ensure ID is string
@@ -540,7 +578,7 @@ def sales_view(
                         address_city=lead.address_city,
                         address_state=lead.address_state,
                         tags=tags_list,
-                        primary_contact=None,
+                        primary_contact=primary_contact,
                         next_action=next_action,
                     )
                 )

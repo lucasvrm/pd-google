@@ -27,6 +27,7 @@ This document describes the database schema for the PipeDesk Google Drive Backen
    - [companies](#companies)
    - [users](#users)
    - [contacts](#contacts)
+   - [lead_contacts](#lead_contacts)
    - [leads](#leads)
    - [master_deals](#master_deals)
    - [tags](#tags)
@@ -325,6 +326,33 @@ This document describes the database schema for the PipeDesk Google Drive Backen
 | name   | String |                | Contact name       |
 | email  | String | NULLABLE       | Contact email      |
 | phone  | String | NULLABLE       | Contact phone      |
+| role   | String | NULLABLE       | Contact role/title (e.g., "CEO", "Manager") |
+
+---
+
+### lead_contacts
+
+**Purpose**: Junction table mapping leads to contacts. Tracks which contacts are associated with which leads and which contact is the primary one for each lead.
+
+**Model**: `LeadContact`  
+**Table Name**: `lead_contacts`
+
+| Column     | Type         | Constraints                     | Description                                    |
+|------------|--------------|---------------------------------|------------------------------------------------|
+| lead_id    | String       | FK(leads.id), PK               | Lead UUID                                      |
+| contact_id | String       | FK(contacts.id), PK            | Contact UUID                                   |
+| is_primary | Boolean      | DEFAULT False                   | Whether this contact is the primary contact for the lead |
+| added_at   | DateTime(TZ) | SERVER_DEFAULT now()           | When the contact was linked to the lead        |
+
+**Composite Primary Key**: (`lead_id`, `contact_id`)
+
+**Relationships**:
+- `contact`: Many-to-one with `Contact`
+
+**Usage**:
+- The primary contact for a lead is determined by `is_primary=true`
+- If no contact has `is_primary=true`, the first contact (ordered by `added_at`) is used as fallback
+- Used by the Sales View endpoint to populate the `primary_contact` field
 
 ---
 
