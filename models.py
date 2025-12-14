@@ -201,6 +201,9 @@ class Lead(Base):
     address_state = Column(String, nullable=True)
     last_interaction_at = Column(DateTime(timezone=True), nullable=True, index=True)
     priority_score = Column(Integer, default=0, index=True)
+    # Disqualification tracking: when a lead is marked as disqualified/lost
+    disqualified_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    disqualification_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -259,6 +262,8 @@ class LeadActivityStats(Base):
     last_interaction_at = Column(DateTime(timezone=True), nullable=True)
     last_email_at = Column(DateTime(timezone=True), nullable=True)
     last_event_at = Column(DateTime(timezone=True), nullable=True)
+    # Upcoming meeting tracking: next scheduled calendar event for this lead
+    next_scheduled_event_at = Column(DateTime(timezone=True), nullable=True, index=True)
     total_emails = Column(Integer, default=0)
     total_events = Column(Integer, default=0)
     total_interactions = Column(Integer, default=0)
@@ -365,6 +370,10 @@ class AuditLog(Base):
     actor = relationship("User", foreign_keys=[actor_id])
 
 
+# Fields that trigger last_interaction_at update when changed.
+# Decision: disqualified_at and disqualification_reason are NOT included because
+# disqualification is a final/terminal state, not an ongoing sales interaction.
+# Bumping last_interaction_at on disqualification would skew engagement metrics.
 LEAD_INTERACTION_TRACKED_FIELDS = {
     "owner_user_id",
     "lead_status_id",
