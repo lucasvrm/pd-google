@@ -5,7 +5,7 @@ from typing import Any, List, Literal, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg2 import Error as PsycopgError
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
@@ -25,7 +25,11 @@ from services.lead_priority_service import (
     calculate_lead_priority,
     classify_priority_bucket,
 )
-from services.next_action_service import suggest_next_action
+from services.next_action_service import (
+    HIGH_ENGAGEMENT_SCORE,
+    STALE_INTERACTION_DAYS,
+    suggest_next_action,
+)
 from utils.prometheus import Counter, Histogram
 from utils.structured_logging import StructuredLogger
 
@@ -228,7 +232,7 @@ def sales_view(
         order_desc = True
         order_field = order_by[1:]
 
-    valid_order_by = ["priority", "last_interaction", "created_at"]
+    valid_order_by = ["priority", "last_interaction", "created_at", "status", "owner", "next_action"]
     if order_field not in valid_order_by:
         sales_view_logger.warning(
             action="sales_view_invalid_param",
@@ -266,6 +270,7 @@ def sales_view(
                 db.query(models.Lead)
                 .outerjoin(models.LeadActivityStats)
                 .outerjoin(models.User, models.User.id == models.Lead.owner_user_id)
+                .outerjoin(models.LeadStatus, models.LeadStatus.id == models.Lead.lead_status_id)
                 .options(
                     joinedload(models.Lead.activity_stats),
                     joinedload(models.Lead.owner),
@@ -394,6 +399,92 @@ def sales_view(
                 else:
                     base_query = base_query.order_by(
                         last_interaction_expr.asc().nullsfirst()
+                    )
+            elif order_field == "status":
+                # Order by LeadStatus.sort_order (lower is more urgent)
+                if not order_desc:
+                    base_query = base_query.order_by(
+                        models.LeadStatus.sort_order.asc().nullslast()
+                    )
+                else:
+                    base_query = base_query.order_by(
+                        models.LeadStatus.sort_order.desc().nullsfirst()
+                    )
+            elif order_field == "owner":
+                # Order by User.name alphabetically
+                if not order_desc:
+                    base_query = base_query.order_by(
+                        models.User.name.asc().nullslast()
+                    )
+                else:
+                    base_query = base_query.order_by(
+                        models.User.name.desc().nullsfirst()
+                    )
+            elif order_field == "next_action":
+                # SQL CASE-based ranking to mimic suggest_next_action logic
+                # Priority ranking (lower = more urgent):
+                # 1: prepare_for_meeting (future event scheduled)
+                # 2: call_first_time (no interaction)
+                # 3: qualify_to_company (high engagement, no deal)
+                # 4: send_follow_up (stale interaction)
+                # 5: send_follow_up (default - keep active)
+                now = datetime.now(timezone.utc)
+                stale_threshold = now - timedelta(days=STALE_INTERACTION_DAYS)
+                next_action_rank = case(
+                    # Priority 1: Future meeting (last_event_at > now)
+                    (
+                        models.LeadActivityStats.last_event_at > now,
+                        1,
+                    ),
+                    # Priority 2: No interaction at all
+                    (
+                        and_(
+                            last_interaction_expr.is_(None),
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        2,
+                    ),
+                    # Priority 3: High engagement (>=70) without deal
+                    (
+                        and_(
+                            models.LeadActivityStats.engagement_score >= HIGH_ENGAGEMENT_SCORE,
+                            models.Lead.qualified_company_id.is_(None),
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        3,
+                    ),
+                    # Priority 4: Stale interaction (>=5 days)
+                    (
+                        and_(
+                            last_interaction_expr.isnot(None),
+                            last_interaction_expr <= stale_threshold,
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        4,
+                    ),
+                    # Default: send_follow_up (keep active)
+                    else_=5,
+                )
+                if not order_desc:
+                    # Ascending: most urgent first (rank 1, 2, 3...)
+                    base_query = base_query.order_by(
+                        next_action_rank.asc(),
+                        last_interaction_expr.asc().nullsfirst(),
+                    )
+                else:
+                    # Descending: least urgent first (rank 5, 4, 3...)
+                    base_query = base_query.order_by(
+                        next_action_rank.desc(),
+                        last_interaction_expr.desc().nullslast(),
                     )
             else:  # created_at
                 order_expr = (

@@ -34,8 +34,15 @@ def setup_module(module):
     now = datetime.now(timezone.utc)
 
     owner = models.User(id="user-1", name="Alice Seller", email="alice@example.com")
+    owner2 = models.User(id="user-2", name="Bob Manager", email="bob@example.com")
     vip_tag = models.Tag(id="tag-vip", name="VIP", color="#ff0000")
     cold_tag = models.Tag(id="tag-cold", name="Cold", color="#0000ff")
+
+    # Create LeadStatus entries for ordering tests
+    status_new = models.LeadStatus(id="new", code="new", label="Novo", sort_order=1)
+    status_contacted = models.LeadStatus(id="contacted", code="contacted", label="Contatado", sort_order=2)
+    status_qualified = models.LeadStatus(id="qualified", code="qualified", label="Qualificado", sort_order=3)
+    status_lost = models.LeadStatus(id="lost", code="lost", label="Perdido", sort_order=4)
 
     lead_hot = models.Lead(
         id="lead-hot",
@@ -115,8 +122,13 @@ def setup_module(module):
     db.add_all(
         [
             owner,
+            owner2,
             vip_tag,
             cold_tag,
+            status_new,
+            status_contacted,
+            status_qualified,
+            status_lost,
             lead_hot,
             lead_cold,
             lead_recent,
@@ -233,6 +245,126 @@ def test_sales_view_pagination_page_2():
         ids1 = {item["id"] for item in body1["data"]}
         ids2 = {item["id"] for item in body2["data"]}
         assert ids1.isdisjoint(ids2)
+
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_status():
+    """Test ordering by status (LeadStatus.sort_order)."""
+    db = TestingSessionLocal()
+    try:
+        # Ascending order (status sort_order: new=1, contacted=2, qualified=3, lost=4)
+        result = leads.sales_view(page=1, page_size=10, order_by="status", db=db)
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 4
+        # First should be "new" (sort_order=1), last should be "lost" (sort_order=4)
+        ids = [item["id"] for item in body["data"]]
+        assert ids[0] == "lead-old"  # status=new (sort_order=1)
+        assert ids[-1] == "lead-cold"  # status=lost (sort_order=4)
+
+        # Descending order
+        result_desc = leads.sales_view(page=1, page_size=10, order_by="-status", db=db)
+        body_desc = result_desc.model_dump()
+        ids_desc = [item["id"] for item in body_desc["data"]]
+        assert ids_desc[0] == "lead-cold"  # status=lost (sort_order=4) first in desc
+        assert ids_desc[-1] == "lead-old"  # status=new (sort_order=1) last in desc
+
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_owner():
+    """Test ordering by owner name (User.name)."""
+    db = TestingSessionLocal()
+    try:
+        # Ascending order (Alice Seller < Bob Manager alphabetically)
+        result = leads.sales_view(page=1, page_size=10, order_by="owner", db=db)
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 4
+        # Alice's leads should come before Bob's leads
+        owner_names = [item["owner"]["name"] if item["owner"] else None for item in body["data"]]
+        
+        # Find index where owner changes from Alice to Bob
+        alice_leads = [i for i, name in enumerate(owner_names) if name == "Alice Seller"]
+        bob_leads = [i for i, name in enumerate(owner_names) if name == "Bob Manager"]
+        
+        # All Alice's leads should come before Bob's in ascending order
+        if alice_leads and bob_leads:
+            assert max(alice_leads) < min(bob_leads)
+
+        # Descending order
+        result_desc = leads.sales_view(page=1, page_size=10, order_by="-owner", db=db)
+        body_desc = result_desc.model_dump()
+        owner_names_desc = [item["owner"]["name"] if item["owner"] else None for item in body_desc["data"]]
+        
+        # Bob's leads should come before Alice's in descending order
+        alice_leads_desc = [i for i, name in enumerate(owner_names_desc) if name == "Alice Seller"]
+        bob_leads_desc = [i for i, name in enumerate(owner_names_desc) if name == "Bob Manager"]
+        
+        if alice_leads_desc and bob_leads_desc:
+            assert max(bob_leads_desc) < min(alice_leads_desc)
+
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_next_action():
+    """Test ordering by next_action (urgency ranking)."""
+    db = TestingSessionLocal()
+    try:
+        # Ascending order (most urgent first)
+        result = leads.sales_view(page=1, page_size=10, order_by="next_action", db=db)
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 4
+        
+        # Based on test data:
+        # - lead-hot: high engagement (85) with no deal -> qualify_to_company (rank 3)
+        # - lead-cold: stale interaction (70 days) -> send_follow_up (rank 4)
+        # - lead-recent: stale interaction (2 days < 5) -> send_follow_up (rank 5)
+        # - lead-old: stale interaction (20 days) -> send_follow_up (rank 4)
+        
+        next_actions = [item["next_action"]["code"] for item in body["data"]]
+        
+        # The order should group by action code priority
+        # qualify_to_company leads should come first, then send_follow_up
+        qualify_indices = [i for i, code in enumerate(next_actions) if code == "qualify_to_company"]
+        follow_up_indices = [i for i, code in enumerate(next_actions) if code == "send_follow_up"]
+        
+        if qualify_indices and follow_up_indices:
+            assert max(qualify_indices) < min(follow_up_indices)
+
+        # Descending order (least urgent first)
+        result_desc = leads.sales_view(page=1, page_size=10, order_by="-next_action", db=db)
+        body_desc = result_desc.model_dump()
+        
+        next_actions_desc = [item["next_action"]["code"] for item in body_desc["data"]]
+        
+        # In descending order, send_follow_up should come before qualify_to_company
+        qualify_indices_desc = [i for i, code in enumerate(next_actions_desc) if code == "qualify_to_company"]
+        follow_up_indices_desc = [i for i, code in enumerate(next_actions_desc) if code == "send_follow_up"]
+        
+        if qualify_indices_desc and follow_up_indices_desc:
+            assert max(follow_up_indices_desc) < min(qualify_indices_desc)
+
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_invalid_falls_back_to_priority():
+    """Test that invalid order_by falls back to priority."""
+    db = TestingSessionLocal()
+    try:
+        result = leads.sales_view(page=1, page_size=10, order_by="invalid_field", db=db)
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 4
+        # Should fall back to priority ordering (highest priority_score first)
+        first, second = body["data"][:2]
+        assert first["priority_score"] >= second["priority_score"]
 
     finally:
         db.close()

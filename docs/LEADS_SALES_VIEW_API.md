@@ -16,7 +16,19 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 - `priority` (string CSV): filtro por buckets de prioridade (ex.: `hot,warm,cold`).
 - `min_priority_score` (int, opcional): filtra por score mínimo.
 - `has_recent_interaction` (bool, opcional): filtra leads com interação recente.
-- `order_by` (string, padrão `priority`): `priority`, `last_interaction` ou `created_at`; prefixe com `-` para ordem decrescente.
+- `order_by` (string, padrão `priority`): campo de ordenação. Valores suportados:
+  - `priority`: ordena por score de prioridade (maior primeiro por padrão)
+  - `last_interaction`: ordena por data da última interação (mais recente primeiro por padrão)
+  - `created_at`: ordena por data de criação (mais recente primeiro por padrão)
+  - `status`: ordena por `LeadStatus.sort_order` (menor = mais urgente por padrão)
+  - `owner`: ordena por nome do responsável (User.name) em ordem alfabética
+  - `next_action`: ordena por urgência da próxima ação sugerida, usando ranking:
+    1. `prepare_for_meeting` (reunião futura agendada)
+    2. `call_first_time` (nenhuma interação registrada)
+    3. `qualify_to_company` (alto engajamento sem empresa qualificada)
+    4. `send_follow_up` (interação antiga/stale)
+    5. `send_follow_up` (manter relacionamento ativo)
+  - Prefixe com `-` para ordem decrescente (ex.: `-priority`, `-status`)
 - `filters` (string, opcional): JSON serializado usado para filtros adicionais externos.
 
 ## Resposta de sucesso
