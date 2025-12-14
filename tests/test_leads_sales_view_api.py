@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 # Import the application components
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag, EntityTag
+from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag, EntityTag, Contact, LeadContact
 from routers import leads
 
 # Setup in-memory SQLite database with StaticPool to share state across threads/connections
@@ -553,3 +553,134 @@ def test_sales_view_search_and_tags_combined(client):
     body = response.json()
     ids = [item["id"] for item in body["data"]]
     assert ids == ["lead_combo_1"]
+
+
+def test_sales_view_primary_contact_with_is_primary(client):
+    """Test that primary_contact is populated from lead_contacts with is_primary=true."""
+    db = TestingSessionLocal()
+    try:
+        # Create contacts
+        contact1 = Contact(id="contact-1", name="John Doe", email="john@example.com", role="CEO")
+        contact2 = Contact(id="contact-2", name="Jane Smith", email="jane@example.com", role="CFO")
+
+        # Create lead
+        lead = Lead(
+            id="lead_with_primary_contact",
+            title="Lead With Primary Contact",
+            priority_score=50,
+        )
+
+        db.add_all([contact1, contact2, lead])
+        db.commit()
+
+        # Link contacts to lead - contact2 is marked as primary
+        lead_contact1 = LeadContact(lead_id=lead.id, contact_id=contact1.id, is_primary=False)
+        lead_contact2 = LeadContact(lead_id=lead.id, contact_id=contact2.id, is_primary=True)
+        db.add_all([lead_contact1, lead_contact2])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view")
+    assert response.status_code == 200
+    body = response.json()
+    lead_data = next((item for item in body["data"] if item["id"] == "lead_with_primary_contact"), None)
+    assert lead_data is not None
+    assert lead_data["primary_contact"] is not None
+    assert lead_data["primary_contact"]["id"] == "contact-2"
+    assert lead_data["primary_contact"]["name"] == "Jane Smith"
+    assert lead_data["primary_contact"]["role"] == "CFO"
+
+
+def test_sales_view_primary_contact_fallback_to_first(client):
+    """Test that primary_contact falls back to first contact if no is_primary=true."""
+    db = TestingSessionLocal()
+    try:
+        # Create contacts
+        contact1 = Contact(id="contact-fallback-1", name="Alice First", email="alice@example.com", role="Manager")
+        contact2 = Contact(id="contact-fallback-2", name="Bob Second", email="bob@example.com", role="Director")
+
+        # Create lead
+        lead = Lead(
+            id="lead_fallback_contact",
+            title="Lead Fallback Contact",
+            priority_score=60,
+        )
+
+        db.add_all([contact1, contact2, lead])
+        db.commit()
+
+        # Link contacts to lead - neither is marked as primary, contact1 added first
+        lead_contact1 = LeadContact(lead_id=lead.id, contact_id=contact1.id, is_primary=False)
+        lead_contact2 = LeadContact(lead_id=lead.id, contact_id=contact2.id, is_primary=False)
+        db.add_all([lead_contact1, lead_contact2])
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view")
+    assert response.status_code == 200
+    body = response.json()
+    lead_data = next((item for item in body["data"] if item["id"] == "lead_fallback_contact"), None)
+    assert lead_data is not None
+    assert lead_data["primary_contact"] is not None
+    # Should fallback to first contact added (by added_at order)
+    assert lead_data["primary_contact"]["id"] == "contact-fallback-1"
+    assert lead_data["primary_contact"]["name"] == "Alice First"
+    assert lead_data["primary_contact"]["role"] == "Manager"
+
+
+def test_sales_view_no_primary_contact_when_no_contacts(client):
+    """Test that primary_contact is None when lead has no contacts."""
+    db = TestingSessionLocal()
+    try:
+        lead = Lead(
+            id="lead_no_contacts",
+            title="Lead No Contacts",
+            priority_score=40,
+        )
+        db.add(lead)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view")
+    assert response.status_code == 200
+    body = response.json()
+    lead_data = next((item for item in body["data"] if item["id"] == "lead_no_contacts"), None)
+    assert lead_data is not None
+    assert lead_data["primary_contact"] is None
+
+
+def test_sales_view_primary_contact_with_null_role(client):
+    """Test that primary_contact handles contacts with null role gracefully."""
+    db = TestingSessionLocal()
+    try:
+        # Create contact with null role
+        contact = Contact(id="contact-no-role", name="NoRole Contact", email="norole@example.com", role=None)
+
+        # Create lead
+        lead = Lead(
+            id="lead_contact_no_role",
+            title="Lead Contact No Role",
+            priority_score=55,
+        )
+
+        db.add_all([contact, lead])
+        db.commit()
+
+        lead_contact = LeadContact(lead_id=lead.id, contact_id=contact.id, is_primary=True)
+        db.add(lead_contact)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view")
+    assert response.status_code == 200
+    body = response.json()
+    lead_data = next((item for item in body["data"] if item["id"] == "lead_contact_no_role"), None)
+    assert lead_data is not None
+    assert lead_data["primary_contact"] is not None
+    assert lead_data["primary_contact"]["id"] == "contact-no-role"
+    assert lead_data["primary_contact"]["name"] == "NoRole Contact"
+    assert lead_data["primary_contact"]["role"] is None

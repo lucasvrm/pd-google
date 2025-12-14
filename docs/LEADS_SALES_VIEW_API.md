@@ -51,7 +51,7 @@ Exemplo real:
       "address_city": null,
       "address_state": null,
       "tags": [ { "id": "tag1", "name": "Urgente", "color": "#ff0000" } ],
-      "primary_contact": null,
+      "primary_contact": { "id": "contact1", "name": "João Silva", "role": "CEO" },
       "priority_description": "Prioridade média",
       "next_action": {
         "code": "call_first_time",
@@ -61,6 +61,21 @@ Exemplo real:
     }
   ],
   "pagination": { "total": 1, "per_page": 10, "page": 1 }
+}
+```
+
+## primary_contact
+O campo `primary_contact` é preenchido a partir da tabela `lead_contacts`:
+- **Prioridade 1:** Contato com `is_primary=true`
+- **Prioridade 2 (fallback):** Primeiro contato vinculado (ordenado por `added_at`)
+- **Sem contatos:** Retorna `null`
+
+Estrutura do objeto:
+```json
+{
+  "id": "uuid-do-contato",
+  "name": "Nome do Contato",
+  "role": "Cargo (opcional)"
 }
 ```
 
@@ -90,5 +105,5 @@ Todos os erros seguem a convenção global de `/api`:
 ```
 
 ## Notas adicionais
-- Os campos complexos já chegam normalizados pelo backend: `tags` como objetos `{id,name,color}`, `owner` como objeto simples, `primary_contact` com `name`/`role`, `priority_description` derivada do bucket e `next_action` com `code`/`label`/`reason`.
+- Os campos complexos já chegam normalizados pelo backend: `tags` como objetos `{id,name,color}`, `owner` como objeto simples, `primary_contact` com `id`/`name`/`role`, `priority_description` derivada do bucket e `next_action` com `code`/`label`/`reason`.
 - Métricas e logs estruturados do endpoint estão descritos em [`docs/SALES_VIEW_OBSERVABILITY.md`](./SALES_VIEW_OBSERVABILITY.md).
