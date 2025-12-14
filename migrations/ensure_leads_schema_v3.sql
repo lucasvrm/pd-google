@@ -111,6 +111,10 @@ CREATE TABLE IF NOT EXISTS lead_activity_stats (
     last_email_at TIMESTAMPTZ,
     last_event_at TIMESTAMPTZ,
     next_scheduled_event_at TIMESTAMPTZ,
+    last_call_at TIMESTAMPTZ,
+    total_calls INTEGER DEFAULT 0,
+    last_value_asset_at TIMESTAMPTZ,
+    total_value_assets INTEGER DEFAULT 0,
     total_emails INTEGER DEFAULT 0,
     total_events INTEGER DEFAULT 0,
     total_interactions INTEGER DEFAULT 0,
@@ -123,6 +127,24 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='next_scheduled_event_at') THEN
         ALTER TABLE lead_activity_stats ADD COLUMN next_scheduled_event_at TIMESTAMPTZ;
+    END IF;
+
+    -- Columns for call_again action (rank 7)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='last_call_at') THEN
+        ALTER TABLE lead_activity_stats ADD COLUMN last_call_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='total_calls') THEN
+        ALTER TABLE lead_activity_stats ADD COLUMN total_calls INTEGER DEFAULT 0;
+    END IF;
+
+    -- Columns for send_value_asset action (rank 8)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='last_value_asset_at') THEN
+        ALTER TABLE lead_activity_stats ADD COLUMN last_value_asset_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='total_value_assets') THEN
+        ALTER TABLE lead_activity_stats ADD COLUMN total_value_assets INTEGER DEFAULT 0;
     END IF;
 END $$;
 

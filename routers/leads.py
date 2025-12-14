@@ -26,6 +26,7 @@ from services.lead_priority_service import (
     classify_priority_bucket,
 )
 from services.next_action_service import (
+    CALL_AGAIN_WINDOW_DAYS,
     COLD_LEAD_DAYS,
     DISQUALIFY_DAYS,
     HIGH_ENGAGEMENT_SCORE,
@@ -33,6 +34,7 @@ from services.next_action_service import (
     POST_MEETING_WINDOW_DAYS,
     SCHEDULE_MEETING_ENGAGEMENT_THRESHOLD,
     STALE_INTERACTION_DAYS,
+    VALUE_ASSET_STALE_DAYS,
     suggest_next_action,
 )
 from utils.prometheus import Counter, Histogram
@@ -445,6 +447,8 @@ def sales_view(
                 cold_threshold = now - timedelta(days=COLD_LEAD_DAYS)
                 disqualify_threshold = now - timedelta(days=DISQUALIFY_DAYS)
                 post_meeting_threshold = now - timedelta(days=POST_MEETING_WINDOW_DAYS)
+                call_again_threshold = now - timedelta(days=CALL_AGAIN_WINDOW_DAYS)
+                value_asset_stale_threshold = now - timedelta(days=VALUE_ASSET_STALE_DAYS)
                 next_action_rank = case(
                     # Priority 1: prepare_for_meeting (future event scheduled)
                     (
@@ -507,13 +511,28 @@ def sales_view(
                         ),
                         6,
                     ),
-                    # NOTE: Ranks 7-8 are skipped in SQL because they require optional fields
-                    # (last_call_at for call_again, last_value_asset_at for send_value_asset)
-                    # that may not exist in the database schema. The Python service handles
-                    # these cases when the fields are available. Using consistent rank numbers
-                    # (9, 10, 11) ensures the Python and SQL ordering align for leads that
-                    # fall through to these categories.
-                    #
+                    # Priority 7: call_again (last_call_at within CALL_AGAIN_WINDOW_DAYS)
+                    # If last_call_at is NULL, this condition fails and falls through to next ranks.
+                    (
+                        and_(
+                            models.LeadActivityStats.last_call_at.isnot(None),
+                            models.LeadActivityStats.last_call_at >= call_again_threshold,
+                        ),
+                        7,
+                    ),
+                    # Priority 8: send_value_asset (engaged lead, last_value_asset_at stale or NULL)
+                    # Applies when: engagement >= MEDIUM and (last_value_asset_at is NULL or >= VALUE_ASSET_STALE_DAYS old)
+                    # If last_value_asset_at is NULL and engagement is high enough, suggest sending value asset.
+                    (
+                        and_(
+                            models.LeadActivityStats.engagement_score >= MEDIUM_ENGAGEMENT_SCORE,
+                            or_(
+                                models.LeadActivityStats.last_value_asset_at.is_(None),
+                                models.LeadActivityStats.last_value_asset_at <= value_asset_stale_threshold,
+                            ),
+                        ),
+                        8,
+                    ),
                     # Priority 9: send_follow_up (stale interaction >=5 days but < 30 days)
                     (
                         and_(

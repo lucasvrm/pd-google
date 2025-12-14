@@ -264,6 +264,12 @@ class LeadActivityStats(Base):
     last_event_at = Column(DateTime(timezone=True), nullable=True)
     # Upcoming meeting tracking: next scheduled calendar event for this lead
     next_scheduled_event_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # Call tracking for call_again action (rank 7)
+    last_call_at = Column(DateTime(timezone=True), nullable=True)
+    total_calls = Column(Integer, default=0)
+    # Value asset tracking for send_value_asset action (rank 8)
+    last_value_asset_at = Column(DateTime(timezone=True), nullable=True)
+    total_value_assets = Column(Integer, default=0)
     total_emails = Column(Integer, default=0)
     total_events = Column(Integer, default=0)
     total_interactions = Column(Integer, default=0)

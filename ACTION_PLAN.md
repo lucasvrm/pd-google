@@ -617,6 +617,34 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 
 **Documentação:** `docs/backend/next_actions.md`
 
+### Sprint 4: Ranks 7-8 SQL Implementation - COMPLETE ✅
+**Objective:** Implementar ranks 7 (call_again) e 8 (send_value_asset) no SQL CASE do order_by=next_action.
+
+1.  ✅ Adicionadas colunas ao modelo `LeadActivityStats` em `models.py`:
+    - `last_call_at` (DateTime) - Para rastrear última ligação
+    - `total_calls` (Integer) - Contador de ligações
+    - `last_value_asset_at` (DateTime) - Para rastrear último material enviado
+    - `total_value_assets` (Integer) - Contador de materiais
+2.  ✅ Atualizado `routers/leads.py`:
+    - Importadas constantes `CALL_AGAIN_WINDOW_DAYS` e `VALUE_ASSET_STALE_DAYS`
+    - Adicionados thresholds `call_again_threshold` e `value_asset_stale_threshold`
+    - Implementado rank 7 (call_again): `last_call_at` dentro de 7 dias
+    - Implementado rank 8 (send_value_asset): engagement >= 40 e sem value_asset recente
+    - Removido comentário "Ranks 7-8 skipped"
+3.  ✅ Atualizado `migrations/ensure_leads_schema_v3.sql`:
+    - CREATE TABLE inclui novas colunas
+    - Bloco DO $$ adiciona colunas idempotentemente via ALTER TABLE ADD COLUMN IF NOT EXISTS
+4.  ✅ Adicionados testes em `tests/test_leads_sales_view.py`:
+    - `test_sales_view_order_by_next_action_with_call_again`
+    - `test_sales_view_order_by_next_action_with_send_value_asset`
+5.  ✅ Todos os 30 testes passam (20 em test_next_action.py + 10 em test_leads_sales_view.py)
+
+**Critérios de aceite verificados:**
+- ✅ order_by=next_action rankeia 7 e 8 no SQL (sem skip)
+- ✅ ensure_leads_schema_v3.sql garante as colunas idempotentemente
+- ✅ Não existe NameError por constantes no next_action_service
+- ✅ Endpoint /api/leads/sales-view funciona com order_by=priority e order_by=next_action
+
 ---
 
 ## Conclusion

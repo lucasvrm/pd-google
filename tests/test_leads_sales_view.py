@@ -399,3 +399,113 @@ def test_sales_view_order_by_invalid_falls_back_to_priority():
 
     finally:
         db.close()
+
+
+def test_sales_view_order_by_next_action_with_call_again():
+    """Test that rank 7 (call_again) is applied in SQL ordering when last_call_at is set.
+    
+    This test creates a lead with last_call_at within the CALL_AGAIN_WINDOW_DAYS (7 days)
+    to verify that the SQL CASE ranks it correctly.
+    """
+    db = TestingSessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Create a lead with recent call (should get rank 7: call_again)
+        lead_call = models.Lead(
+            id="lead-call-again",
+            title="Call Again Lead",
+            trade_name="Call Trade",
+            lead_status_id="contacted",
+            owner_user_id="user-1",
+            priority_score=35,
+            created_at=now - timedelta(days=5),
+            updated_at=now - timedelta(days=1),
+            last_interaction_at=now - timedelta(days=3),
+        )
+        stats_call = models.LeadActivityStats(
+            lead_id="lead-call-again",
+            engagement_score=30,  # Below schedule_meeting threshold (50)
+            last_interaction_at=now - timedelta(days=3),
+            last_call_at=now - timedelta(days=3),  # Within 7-day call window -> rank 7
+        )
+        
+        db.add_all([lead_call, stats_call])
+        db.commit()
+        
+        # Query with order_by=next_action
+        result = leads.sales_view(page=1, page_size=20, order_by="next_action", db=db)
+        body = result.model_dump()
+        
+        # Find the lead and verify it has call_again action
+        lead_data = next((item for item in body["data"] if item["id"] == "lead-call-again"), None)
+        assert lead_data is not None, "lead-call-again should be in results"
+        assert lead_data["next_action"]["code"] == "call_again", (
+            f"Expected call_again but got {lead_data['next_action']['code']}"
+        )
+        
+        # Clean up
+        db.query(models.LeadActivityStats).filter(
+            models.LeadActivityStats.lead_id == "lead-call-again"
+        ).delete()
+        db.query(models.Lead).filter(models.Lead.id == "lead-call-again").delete()
+        db.commit()
+        
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_next_action_with_send_value_asset():
+    """Test that rank 8 (send_value_asset) is applied in SQL ordering.
+    
+    This test creates a lead with engagement >= MEDIUM_ENGAGEMENT_SCORE (40)
+    and no last_value_asset_at, which should trigger send_value_asset (rank 8).
+    """
+    db = TestingSessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Create a lead that should get rank 8: send_value_asset
+        # Conditions: engagement >= 40, no last_value_asset_at, no recent call
+        lead_value = models.Lead(
+            id="lead-value-asset",
+            title="Value Asset Lead",
+            trade_name="Value Trade",
+            lead_status_id="contacted",
+            owner_user_id="user-2",
+            priority_score=45,
+            created_at=now - timedelta(days=10),
+            updated_at=now - timedelta(days=1),
+            last_interaction_at=now - timedelta(days=2),
+        )
+        stats_value = models.LeadActivityStats(
+            lead_id="lead-value-asset",
+            engagement_score=42,  # Below schedule_meeting (50) but >= medium (40)
+            last_interaction_at=now - timedelta(days=2),
+            last_call_at=None,  # No recent call
+            last_value_asset_at=None,  # Never sent -> rank 8
+        )
+        
+        db.add_all([lead_value, stats_value])
+        db.commit()
+        
+        # Query with order_by=next_action
+        result = leads.sales_view(page=1, page_size=20, order_by="next_action", db=db)
+        body = result.model_dump()
+        
+        # Find the lead and verify it has send_value_asset action
+        lead_data = next((item for item in body["data"] if item["id"] == "lead-value-asset"), None)
+        assert lead_data is not None, "lead-value-asset should be in results"
+        assert lead_data["next_action"]["code"] == "send_value_asset", (
+            f"Expected send_value_asset but got {lead_data['next_action']['code']}"
+        )
+        
+        # Clean up
+        db.query(models.LeadActivityStats).filter(
+            models.LeadActivityStats.lead_id == "lead-value-asset"
+        ).delete()
+        db.query(models.Lead).filter(models.Lead.id == "lead-value-asset").delete()
+        db.commit()
+        
+    finally:
+        db.close()

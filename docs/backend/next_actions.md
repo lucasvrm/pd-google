@@ -463,22 +463,31 @@ Use este checklist para validar manualmente o comportamento do endpoint:
 
 O endpoint implementa a ordenação por `next_action` de duas formas:
 
-1. **SQL (CASE):** Para ordenação eficiente no banco, usa um `CASE` que mapeia as condições principais para ranks numéricos (1–12). Isso permite ordenação rápida sem carregar todos os leads em memória. A precedência 12 é o fallback default.
+1. **SQL (CASE):** Para ordenação eficiente no banco, usa um `CASE` que mapeia as condições principais para ranks numéricos (1–12). Isso permite ordenação rápida sem carregar todos os leads em memória. A precedência 12 é o fallback default. **Todos os 12 ranks (1–12) estão implementados no SQL, incluindo rank 7 (call_again) e rank 8 (send_value_asset).**
 
 2. **Python (next_action_service):** Para cada lead retornado, a função `suggest_next_action()` é chamada para calcular o `next_action` exato com o `reason` detalhado.
 
 **Nota sobre códigos duplicados:** O código `send_follow_up` aparece em duas precedências (9 e 12). A precedência 9 é acionada quando há interação stale (5–29 dias), enquanto a 12 é o fallback quando nenhuma outra regra se aplica. O `reason` retornado diferencia os casos.
 
-### Campos Opcionais
+### Campos para Ranks 7-8
 
-As regras 7 (`call_again`) e 8 (`send_value_asset`) dependem de campos opcionais que podem não existir no schema do banco. Nesses casos, essas regras são puladas na avaliação:
+As regras 7 (`call_again`) e 8 (`send_value_asset`) dependem dos seguintes campos no modelo `LeadActivityStats`:
 
-- `LeadActivityStats.last_call_at`
-- `LeadActivityStats.last_value_asset_at`
-- `LeadActivityStats.next_scheduled_event_at`
+- `last_call_at` (timestamptz) — Se NULL, a condição do rank 7 falha e passa para o próximo rank
+- `last_value_asset_at` (timestamptz) — Se NULL e engagement >= 40, dispara rank 8 (lead engajado sem material enviado)
 
-O serviço trata graciosamente a ausência desses campos, usando fallbacks quando disponíveis.
+Esses campos são adicionados idempotentemente pela migration `ensure_leads_schema_v3.sql`.
+
+### Constantes Importadas
+
+O arquivo `routers/leads.py` importa as seguintes constantes do `services/next_action_service.py`:
+
+- `CALL_AGAIN_WINDOW_DAYS` (7) — Janela de dias para considerar "ligar novamente"
+- `VALUE_ASSET_STALE_DAYS` (14) — Dias para material de valor ficar "stale"
+- `COLD_LEAD_DAYS`, `DISQUALIFY_DAYS`, `STALE_INTERACTION_DAYS` — Para outras regras
+- `HIGH_ENGAGEMENT_SCORE`, `MEDIUM_ENGAGEMENT_SCORE`, `SCHEDULE_MEETING_ENGAGEMENT_THRESHOLD` — Thresholds de engajamento
+- `POST_MEETING_WINDOW_DAYS` — Janela pós-reunião
 
 ---
 
-*Última atualização: Sprint 3/3 — Dezembro 2025*
+*Última atualização: Sprint 4 — Dezembro 2025*
