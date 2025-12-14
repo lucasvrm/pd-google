@@ -594,3 +594,113 @@ def test_permission_service_calendar_permissions():
     for role in [None, ""]:
         perms = PermissionService.get_calendar_permissions_for_role(role)
         assert perms.calendar_read_details is True, f"Role {role} should have calendar_read_details (backward compat)"
+
+
+# ------------------------------------------------------------
+# Quick Actions Support Tests
+# ------------------------------------------------------------
+
+def test_list_events_with_entity_type_and_entity_id():
+    """Test that entityType and entityId query parameters are accepted for quick actions"""
+    # Create an event first
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Quick Action Event",
+        "start_time": "2024-01-15T10:00:00",
+        "end_time": "2024-01-15T11:00:00"
+    })
+    assert create_res.status_code == 201
+    
+    # List events with entityType and entityId - should not return 422
+    response = client.get("/api/calendar/events?entityType=lead&entityId=lead-123")
+    assert response.status_code == 200
+    # Response should be a list (may be empty if events are outside default time range)
+    assert isinstance(response.json(), list)
+
+
+def test_list_events_with_calendar_id():
+    """Test that calendarId parameter is accepted"""
+    response = client.get("/api/calendar/events?calendarId=primary")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_list_events_quick_actions_with_all_params():
+    """Test quick actions with all entity and time parameters"""
+    # Create an event with a recent date
+    now = datetime.utcnow()
+    start = (now + timedelta(days=1)).strftime("%Y-%m-%dT10:00:00")
+    end = (now + timedelta(days=1)).strftime("%Y-%m-%dT11:00:00")
+    
+    create_res = client.post("/api/calendar/events", json={
+        "summary": "Future Quick Action Event",
+        "start_time": start,
+        "end_time": end
+    })
+    assert create_res.status_code == 201
+    event_id = create_res.json()["id"]
+    
+    # Use quick actions params with entity context
+    response = client.get(f"/api/calendar/events?entityType=deal&entityId=deal-456&calendarId=primary")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    # Should find the event we just created (it's within the default time range)
+    found = any(evt["id"] == event_id for evt in data)
+    assert found, "Recently created event should be found with quick action params"
+
+
+def test_create_event_with_title_instead_of_summary():
+    """Test that 'title' can be used as an alias for 'summary'"""
+    response = client.post("/api/calendar/events", json={
+        "title": "Event Using Title Field",
+        "start_time": "2024-02-01T10:00:00",
+        "end_time": "2024-02-01T11:00:00"
+    })
+    assert response.status_code == 201
+    data = response.json()
+    assert data["summary"] == "Event Using Title Field"
+
+
+def test_create_event_with_calendar_id():
+    """Test that calendar_id is accepted in event creation"""
+    response = client.post("/api/calendar/events", json={
+        "summary": "Event with Calendar ID",
+        "start_time": "2024-02-02T10:00:00",
+        "end_time": "2024-02-02T11:00:00",
+        "calendar_id": "primary"
+    })
+    assert response.status_code == 201
+
+
+def test_create_event_without_summary_uses_default():
+    """Test that event creation without summary uses default 'Untitled Event'"""
+    response = client.post("/api/calendar/events", json={
+        "start_time": "2024-02-03T10:00:00",
+        "end_time": "2024-02-03T11:00:00"
+    })
+    assert response.status_code == 201
+    data = response.json()
+    assert data["summary"] == "Untitled Event"
+
+
+def test_list_events_with_time_min_alias():
+    """Test that timeMin query parameter alias works"""
+    time_min = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    response = client.get(f"/api/calendar/events?timeMin={time_min}")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_list_events_with_time_max_alias():
+    """Test that timeMax query parameter alias works"""
+    time_max = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    response = client.get(f"/api/calendar/events?timeMax={time_max}")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_quick_actions_entity_types():
+    """Test that all valid entity types are accepted"""
+    for entity_type in ["company", "lead", "deal", "contact"]:
+        response = client.get(f"/api/calendar/events?entityType={entity_type}&entityId=test-123")
+        assert response.status_code == 200, f"entityType={entity_type} should be accepted"

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, Header
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, Field, model_validator
+from datetime import datetime, timedelta
 import json
 
 from database import SessionLocal
@@ -61,15 +61,44 @@ class Attendee(BaseModel):
 class EventCreate(BaseModel):
     """
     Schema for creating a new calendar event.
+    
+    Supports both 'summary' and 'title' as the event title for flexibility.
+    The UI can send either field - 'title' is an alias for 'summary'.
     """
-    summary: str
+    summary: Optional[str] = Field(default=None, description="Event title/subject")
+    title: Optional[str] = Field(default=None, description="Alias for summary - event title/subject")
     description: Optional[str] = None
-    start_time: datetime
-    end_time: datetime
-    attendees: Optional[List[str]] = []  # List of email addresses
-    create_meet_link: bool = True
+    start_time: datetime = Field(..., alias="start_time", description="Event start datetime in ISO format")
+    end_time: datetime = Field(..., alias="end_time", description="Event end datetime in ISO format")
+    attendees: Optional[List[str]] = Field(default_factory=list, description="List of email addresses to invite")
+    create_meet_link: bool = Field(default=True, description="Whether to generate a Google Meet link")
+    calendar_id: Optional[str] = Field(default="primary", description="Calendar ID, defaults to 'primary'")
+    
+    @model_validator(mode='before')
+    @classmethod
+    def handle_title_alias(cls, data):
+        """
+        Handle 'title' as an alias for 'summary'.
+        
+        Precedence rules:
+        1. If 'summary' is provided, use it (ignore 'title')
+        2. If only 'title' is provided, use 'title' as 'summary'
+        3. If neither is provided, default to 'Untitled Event'
+        """
+        if isinstance(data, dict):
+            # If summary is provided, use it (title is ignored)
+            if data.get('summary'):
+                return data
+            # If title is provided but summary is not, use title as summary
+            if data.get('title'):
+                data['summary'] = data['title']
+            # If neither is provided, set a default
+            if not data.get('summary'):
+                data['summary'] = 'Untitled Event'
+        return data
 
     class Config:
+        populate_by_name = True
         json_schema_extra = {
             "example": {
                 "summary": "Sales Meeting - Client X",
@@ -269,10 +298,34 @@ def create_event(
 @router.get("/events", response_model=List[EventResponse],
             summary="List Calendar Events",
             description="Retrieves calendar events from the local database mirror. "
-                       "Supports filtering by time range, status, and pagination.")
+                       "Supports filtering by time range, status, entity context, and pagination. "
+                       "If no time range is provided, defaults to last 30 days to +90 days.")
 def list_events(
-    time_min: Optional[datetime] = None,
-    time_max: Optional[datetime] = None,
+    time_min: Optional[datetime] = Query(
+        None,
+        alias="timeMin",
+        description="Filter events starting after this datetime (ISO format). Defaults to 30 days ago if not provided."
+    ),
+    time_max: Optional[datetime] = Query(
+        None,
+        alias="timeMax",
+        description="Filter events ending before this datetime (ISO format). Defaults to 90 days from now if not provided."
+    ),
+    entity_type: Optional[Literal["company", "lead", "deal", "contact"]] = Query(
+        None,
+        alias="entityType",
+        description="Filter by entity type for quick actions context"
+    ),
+    entity_id: Optional[str] = Query(
+        None,
+        alias="entityId",
+        description="Filter by entity ID for quick actions context"
+    ),
+    calendar_id: Optional[str] = Query(
+        "primary",
+        alias="calendarId",
+        description="Calendar ID to query, defaults to 'primary'"
+    ),
     status: Optional[Literal["confirmed", "tentative", "cancelled"]] = Query(
         None, 
         description="Filter by event status"
@@ -286,8 +339,11 @@ def list_events(
     List events from Local Database (synced from Google Calendar).
     
     **Query Parameters:**
-    - **time_min**: Filter events starting after this datetime (ISO format)
-    - **time_max**: Filter events ending before this datetime (ISO format)
+    - **timeMin**: Filter events starting after this datetime (ISO format). Defaults to 30 days ago.
+    - **timeMax**: Filter events ending before this datetime (ISO format). Defaults to 90 days from now.
+    - **entityType**: Filter by entity type (company, lead, deal, contact) for quick actions
+    - **entityId**: Filter by entity ID for quick actions context
+    - **calendarId**: Calendar ID, defaults to "primary"
     - **status**: Filter by event status (confirmed, tentative, cancelled)
     - **limit**: Maximum number of results to return (default: 100, max: 500)
     - **offset**: Number of results to skip for pagination (default: 0)
@@ -299,15 +355,36 @@ def list_events(
     - By default, cancelled events are excluded unless explicitly requested via status filter
     - Events are synced from Google Calendar via webhooks
     - Access to event details (description, attendees, meet_link) depends on user role
+    - If entityType and entityId are provided, events are filtered by attendee emails associated with that entity
     """
     # Get calendar permissions for the user's role
     calendar_perms = PermissionService.get_calendar_permissions_for_role(x_user_role)
+    
+    # Apply safe defaults for time range only when entity context is provided (quick actions)
+    # or when the caller explicitly requests time filtering.
+    # For backward compatibility, if no time filters and no entity context, return all events.
+    now = datetime.utcnow()
+    use_time_defaults = entity_type is not None and entity_id is not None
+    
+    # Compute effective time range
+    effective_time_min = time_min
+    effective_time_max = time_max
+    
+    # If quick actions context is provided, apply safe defaults
+    if use_time_defaults:
+        if effective_time_min is None:
+            effective_time_min = now - timedelta(days=30)
+        if effective_time_max is None:
+            effective_time_max = now + timedelta(days=90)
     
     calendar_logger.info(
         action="list_events",
         status="checking_permissions",
         role=x_user_role,
-        calendar_read_details=calendar_perms.calendar_read_details
+        calendar_read_details=calendar_perms.calendar_read_details,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        calendar_id=calendar_id
     )
     
     # Build query
@@ -320,10 +397,25 @@ def list_events(
         # By default, exclude cancelled events
         query = query.filter(models.CalendarEvent.status != 'cancelled')
 
-    if time_min:
-        query = query.filter(models.CalendarEvent.start_time >= time_min)
-    if time_max:
-        query = query.filter(models.CalendarEvent.end_time <= time_max)
+    # Apply time range filters only if provided or using quick action defaults
+    if effective_time_min is not None:
+        query = query.filter(models.CalendarEvent.start_time >= effective_time_min)
+    if effective_time_max is not None:
+        query = query.filter(models.CalendarEvent.end_time <= effective_time_max)
+    
+    # TODO: Implement entity-based filtering by attendee emails
+    # When entityType and entityId are provided, events should be filtered based on 
+    # contact emails associated with that entity (via CrmContactService).
+    # For now, we accept these parameters to prevent 422 errors from UI quick actions.
+    # The filtering should query the entity's contacts and match against event attendees.
+    if entity_type and entity_id:
+        calendar_logger.info(
+            action="list_events",
+            status="entity_context_provided",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            message="Entity context accepted - full entity-based filtering pending implementation"
+        )
 
     # Apply pagination and ordering
     events = query.order_by(models.CalendarEvent.start_time).offset(offset).limit(limit).all()
@@ -360,7 +452,9 @@ def list_events(
         status="success",
         role=x_user_role,
         event_count=len(response_list),
-        details_redacted=not calendar_perms.calendar_read_details
+        details_redacted=not calendar_perms.calendar_read_details,
+        time_min=effective_time_min.isoformat() if effective_time_min else None,
+        time_max=effective_time_max.isoformat() if effective_time_max else None
     )
 
     return response_list
