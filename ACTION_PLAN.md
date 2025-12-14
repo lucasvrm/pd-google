@@ -541,6 +541,9 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 ### Completed (Phase 4) ✅
 *   ✅ `docs/backend/calendar_sync.md` - Two-way calendar sync documentation with sync token flow and 410 handling
 
+### Completed (Sprint 3/3) ✅
+*   ✅ `docs/backend/next_actions.md` - Next Actions rules, precedence, fields, and QA checklist
+
 ### Pending (Phase 2-5) 🔴
 *   🔴 `docs/AUDIT_LOG_API.md` - Audit log API documentation
 *   🔴 `docs/RBAC_GUIDE.md` - RBAC implementation guide
@@ -596,6 +599,23 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 5.  🔵 Database indexes for performance (future optimization)
 6.  🔵 Caching layer for frequently accessed timelines (future optimization)
 7.  ✅ Write tests for timeline aggregation
+
+### Sprint 3/3: Next Actions Documentation - COMPLETE ✅
+**Objective:** Documentar claramente as regras finais das next_actions e a precedência, com checklist de QA manual.
+
+1.  ✅ Criada documentação completa em `docs/backend/next_actions.md`:
+    - Lista de 11 códigos únicos de next_action (com 12 níveis de precedência)
+    - Campos do Lead e LeadActivityStats que influenciam cada regra
+    - Parâmetros de configuração (thresholds)
+    - Detalhamento de cada regra com exemplos de retorno
+2.  ✅ Incluído bloco "Como testar" com exemplos de chamadas:
+    - `GET /api/leads/sales-view?order_by=next_action`
+    - `GET /api/leads/sales-view?order_by=-next_action`
+    - `GET /api/leads/sales-view?order_by=next_action&days_without_interaction=14`
+3.  ✅ Incluído checklist de QA manual com 12 testes de validação
+4.  ✅ Atualizado `ACTION_PLAN.md` com progresso
+
+**Documentação:** `docs/backend/next_actions.md`
 
 ---
 
