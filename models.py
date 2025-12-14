@@ -217,6 +217,22 @@ class LeadTag(Base):
     tag_id = Column(String, ForeignKey("tags.id"), primary_key=True)
 
 
+class EntityTag(Base):
+    """
+    Maps the entity_tags table used by the frontend to associate tags with any entity.
+    This is the source of truth for tags in the Sales View.
+    """
+    __tablename__ = "entity_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_type = Column(String, nullable=False, index=True)  # "lead", "deal", "contact", etc.
+    entity_id = Column(String, nullable=False, index=True)  # UUID of the entity
+    tag_id = Column(String, ForeignKey("tags.id"), nullable=False, index=True)
+
+    # Relationship to Tag
+    tag = relationship("Tag")
+
+
 class LeadActivityStats(Base):
     __tablename__ = "lead_activity_stats"
 
