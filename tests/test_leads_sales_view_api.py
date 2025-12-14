@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 # Import the application components
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag
+from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag, EntityTag
 from routers import leads
 
 # Setup in-memory SQLite database with StaticPool to share state across threads/connections
@@ -402,3 +402,154 @@ def test_sales_view_owner_me_priority_and_days_filter(client):
     body = response.json()
     ids = [item["id"] for item in body["data"]]
     assert ids == ["lead_hot_stale"]
+
+
+def test_sales_view_search_filter(client):
+    """Test text search filters leads by legal_name or trade_name."""
+    db = TestingSessionLocal()
+    try:
+        lead1 = Lead(
+            id="lead_search_1",
+            title="ABC Consulting Ltd",  # maps to legal_name
+            trade_name="ABC",
+            priority_score=50,
+        )
+        lead2 = Lead(
+            id="lead_search_2",
+            title="XYZ Solutions",
+            trade_name="Best XYZ Corp",
+            priority_score=60,
+        )
+        lead3 = Lead(
+            id="lead_search_3",
+            title="Omega Industries",
+            trade_name="Omega",
+            priority_score=70,
+        )
+
+        db.add_all([lead1, lead2, lead3])
+        db.commit()
+    finally:
+        db.close()
+
+    # Test search by legal_name (partial match, case-insensitive)
+    response = client.get("/api/leads/sales-view?search=abc")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert "lead_search_1" in ids
+    assert "lead_search_2" not in ids
+    assert "lead_search_3" not in ids
+
+    # Test search by trade_name (partial match)
+    response = client.get("/api/leads/sales-view?search=xyz")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert "lead_search_2" in ids
+
+    # Test with q parameter (legacy alias)
+    response = client.get("/api/leads/sales-view?q=omega")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert "lead_search_3" in ids
+
+
+def test_sales_view_tags_filter_via_entity_tags(client):
+    """Test filtering leads by tags using entity_tags table."""
+    db = TestingSessionLocal()
+    try:
+        tag1 = Tag(id="tag-urgent", name="Urgent", color="#ff0000")
+        tag2 = Tag(id="tag-vip", name="VIP", color="#00ff00")
+        tag3 = Tag(id="tag-cold", name="Cold", color="#0000ff")
+
+        lead1 = Lead(id="lead_tag_1", title="Lead With Urgent Tag")
+        lead2 = Lead(id="lead_tag_2", title="Lead With VIP Tag")
+        lead3 = Lead(id="lead_tag_3", title="Lead Without Tags")
+
+        db.add_all([tag1, tag2, tag3, lead1, lead2, lead3])
+        db.commit()
+
+        # Create entity_tags associations
+        entity_tag1 = EntityTag(entity_type="lead", entity_id="lead_tag_1", tag_id="tag-urgent")
+        entity_tag2 = EntityTag(entity_type="lead", entity_id="lead_tag_2", tag_id="tag-vip")
+        entity_tag3 = EntityTag(entity_type="lead", entity_id="lead_tag_1", tag_id="tag-cold")
+
+        db.add_all([entity_tag1, entity_tag2, entity_tag3])
+        db.commit()
+    finally:
+        db.close()
+
+    # Test filtering by a single tag
+    response = client.get("/api/leads/sales-view?tags=tag-urgent")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert "lead_tag_1" in ids
+    assert "lead_tag_2" not in ids
+    assert "lead_tag_3" not in ids
+
+    # Test filtering by multiple tags (CSV)
+    response = client.get("/api/leads/sales-view?tags=tag-urgent,tag-vip")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert "lead_tag_1" in ids
+    assert "lead_tag_2" in ids
+    assert "lead_tag_3" not in ids
+
+
+def test_sales_view_tags_returned_from_entity_tags(client):
+    """Test that tags in response come from entity_tags (source of truth)."""
+    db = TestingSessionLocal()
+    try:
+        tag_entity = Tag(id="tag-from-entity", name="EntityTag", color="#ff00ff")
+
+        lead = Lead(id="lead_entity_tag", title="Lead With Entity Tags")
+
+        db.add_all([tag_entity, lead])
+        db.commit()
+
+        # Add tag via entity_tags (source of truth)
+        entity_tag = EntityTag(entity_type="lead", entity_id="lead_entity_tag", tag_id="tag-from-entity")
+        db.add(entity_tag)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/leads/sales-view")
+    assert response.status_code == 200
+    body = response.json()
+    lead_data = next((item for item in body["data"] if item["id"] == "lead_entity_tag"), None)
+    assert lead_data is not None
+    assert len(lead_data["tags"]) == 1
+    assert lead_data["tags"][0]["id"] == "tag-from-entity"
+    assert lead_data["tags"][0]["name"] == "EntityTag"
+
+
+def test_sales_view_search_and_tags_combined(client):
+    """Test combining search and tags filters."""
+    db = TestingSessionLocal()
+    try:
+        tag = Tag(id="tag-premium", name="Premium", color="#gold")
+        lead1 = Lead(id="lead_combo_1", title="Premium Client ABC")
+        lead2 = Lead(id="lead_combo_2", title="Premium Client XYZ")
+        lead3 = Lead(id="lead_combo_3", title="Regular Client ABC")
+
+        db.add_all([tag, lead1, lead2, lead3])
+        db.commit()
+
+        # Only lead1 has the premium tag
+        entity_tag = EntityTag(entity_type="lead", entity_id="lead_combo_1", tag_id="tag-premium")
+        db.add(entity_tag)
+        db.commit()
+    finally:
+        db.close()
+
+    # Search for "ABC" with Premium tag - should only return lead_combo_1
+    response = client.get("/api/leads/sales-view?search=ABC&tags=tag-premium")
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["data"]]
+    assert ids == ["lead_combo_1"]

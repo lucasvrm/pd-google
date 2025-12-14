@@ -5,7 +5,7 @@ from typing import Any, List, Literal, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg2 import Error as PsycopgError
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
@@ -118,6 +118,9 @@ def sales_view(
     page_size_override: Optional[int] = Query(
         None, ge=1, le=100, alias="page_size", description="Alias para page_size"
     ),
+    search: Optional[str] = Query(None, description="Text search on lead names"),
+    q: Optional[str] = Query(None, description="Text search on lead names (legacy alias)"),
+    tags: Optional[str] = Query(None, description="Tag IDs filter (CSV)"),
     owner: Optional[str] = Query(None, description="Owner ID filter"),
     owner_ids: Optional[str] = Query(
         None, alias="ownerIds", description="Owner IDs filter (CSV)"
@@ -173,6 +176,15 @@ def sales_view(
     order_by = _extract_value(order_by)
     page_size_override = _extract_value(page_size_override)
     days_without_interaction = _extract_value(days_without_interaction)
+    search = _extract_value(search)
+    q = _extract_value(q)
+    tags = _extract_value(tags)
+
+    # Normalize search term: use search or fall back to q (legacy alias)
+    search_term = search or q
+
+    # Normalize tags filter (CSV of tag IDs)
+    tags_filter = _normalize_filter_list(tags)
 
     # Determine effective page size supporting pageSize and page_size
     effective_page_size = page_size_override or page_size
@@ -238,6 +250,8 @@ def sales_view(
         "order_by": order_by,
         "has_recent_interaction": has_recent_interaction,
         "days_without_interaction": days_without_interaction,
+        "search_term": search_term,
+        "tags_filter": tags_filter,
     }
     sales_view_logger.info(
         action="sales_view_request",
@@ -278,6 +292,28 @@ def sales_view(
                 base_query = base_query.filter(
                     models.Lead.lead_origin_id.in_(origin_filter)
                 )
+
+            # Apply text search filter (ILIKE on legal_name, trade_name)
+            if search_term:
+                search_pattern = f"%{search_term}%"
+                base_query = base_query.filter(
+                    or_(
+                        models.Lead.title.ilike(search_pattern),  # title maps to legal_name column
+                        models.Lead.trade_name.ilike(search_pattern),
+                    )
+                )
+
+            # Apply tags filter via EXISTS subquery on entity_tags
+            if tags_filter:
+                # Use EXISTS subquery to filter leads that have any of the specified tags
+                entity_tag_subquery = select(models.EntityTag.entity_id).where(
+                    and_(
+                        models.EntityTag.entity_type == "lead",
+                        models.EntityTag.entity_id == models.Lead.id,
+                        models.EntityTag.tag_id.in_(tags_filter),
+                    )
+                ).correlate(models.Lead)
+                base_query = base_query.filter(exists(entity_tag_subquery))
 
             # Apply priority filter - support list (for priority_bucket)
             if priority_filter:
@@ -374,6 +410,24 @@ def sales_view(
                 .all()
             )
 
+            # Pre-fetch tags from entity_tags for all leads (source of truth)
+            lead_ids = [lead.id for lead in leads]
+            entity_tags_lookup: dict = {}
+            if lead_ids:
+                entity_tags_rows = (
+                    db.query(models.EntityTag, models.Tag)
+                    .join(models.Tag, models.Tag.id == models.EntityTag.tag_id)
+                    .filter(
+                        models.EntityTag.entity_type == "lead",
+                        models.EntityTag.entity_id.in_(lead_ids),
+                    )
+                    .all()
+                )
+                for entity_tag, tag in entity_tags_rows:
+                    if entity_tag.entity_id not in entity_tags_lookup:
+                        entity_tags_lookup[entity_tag.entity_id] = []
+                    entity_tags_lookup[entity_tag.entity_id].append(tag)
+
         except (ProgrammingError, PsycopgError, Exception) as query_exc:
             sales_view_metrics["errors"] += 1
             sales_view_logger.error(
@@ -416,9 +470,22 @@ def sales_view(
                 )
                 last_interaction = _normalize_datetime(last_interaction)
 
-                # Robust tag extraction: filter out None values and ensure string conversion
+                # Robust tag extraction: use entity_tags as source of truth
+                # Fall back to lead.tags if entity_tags lookup returns empty
                 tags_list: List[TagItem] = []
-                if lead.tags:
+                entity_tags = entity_tags_lookup.get(lead.id, [])
+                if entity_tags:
+                    tags_list = [
+                        TagItem(
+                            id=str(tag.id),
+                            name=str(tag.name),
+                            color=tag.color,
+                        )
+                        for tag in entity_tags
+                        if tag and tag.name is not None and tag.id is not None
+                    ]
+                elif lead.tags:
+                    # Fallback to lead.tags if entity_tags is empty
                     tags_list = [
                         TagItem(
                             id=str(tag.id),
