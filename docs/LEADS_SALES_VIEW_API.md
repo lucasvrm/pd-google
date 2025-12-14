@@ -23,11 +23,18 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
   - `status`: ordena por `LeadStatus.sort_order` (menor = mais urgente por padrão)
   - `owner`: ordena por nome do responsável (User.name) em ordem alfabética
   - `next_action`: ordena por urgência da próxima ação sugerida, usando ranking:
-    1. `prepare_for_meeting` (reunião futura agendada)
-    2. `call_first_time` (nenhuma interação registrada)
-    3. `qualify_to_company` (alto engajamento sem empresa qualificada)
-    4. `send_follow_up` (interação antiga/stale)
-    5. `send_follow_up` (manter relacionamento ativo)
+     1. `prepare_for_meeting` - Reunião futura agendada
+     2. `post_meeting_follow_up` - Follow-up pós-reunião (meeting recente sem interação posterior)
+     3. `call_first_time` - Nenhuma interação registrada
+     4. `handoff_to_deal` - Empresa qualificada sem deal vinculado
+     5. `qualify_to_company` - Alto engajamento sem empresa qualificada
+     6. `schedule_meeting` - Engajamento médio+ sem reunião agendada
+     7. `call_again` - Ligação recente que precisa de follow-up (requer campo last_call_at)
+     8. `send_value_asset` - Lead engajado sem material de valor recente (requer campo last_value_asset_at)
+     9. `send_follow_up` - Interação stale (>=5 dias, <30 dias)
+    10. `reengage_cold_lead` - Lead frio (>=30 dias sem interação)
+    11. `disqualify` - Muito tempo sem interação, baixo engajamento, sem empresa/deal
+    12. `send_follow_up` - Manter relacionamento ativo (default)
   - Prefixe com `-` para ordem decrescente (ex.: `-priority`, `-status`)
 - `filters` (string, opcional): JSON serializado usado para filtros adicionais externos.
 
@@ -74,6 +81,23 @@ Exemplo real:
   ],
   "pagination": { "total": 1, "per_page": 10, "page": 1 }
 }
+```
+
+### Possíveis valores de next_action
+
+| Código | Label | Descrição |
+|--------|-------|-----------|
+| `prepare_for_meeting` | "Preparar para reunião" | Reunião futura agendada |
+| `post_meeting_follow_up` | "Follow-up pós-reunião" | Reunião ocorreu recentemente sem interação posterior |
+| `call_first_time` | "Fazer primeira ligação" | Lead sem nenhuma interação |
+| `handoff_to_deal` | "Fazer handoff (para deal)" | Empresa qualificada mas sem deal vinculado |
+| `qualify_to_company` | "Qualificar para empresa" | Alto engajamento sem empresa qualificada |
+| `schedule_meeting` | "Agendar reunião" | Engajamento médio+ sem reunião agendada |
+| `call_again` | "Ligar novamente" | Ligação recente dentro da janela de follow-up |
+| `send_value_asset` | "Enviar material / valor" | Lead engajado sem material de valor recente |
+| `send_follow_up` | "Enviar follow-up" | Interação stale ou manter relacionamento ativo |
+| `reengage_cold_lead` | "Reengajar lead frio" | Lead muito tempo sem interação (>=30 dias) |
+| `disqualify` | "Desqualificar / encerrar" | Lead muito antigo, baixo engajamento, sem qualificação |
 ```
 
 ## primary_contact
