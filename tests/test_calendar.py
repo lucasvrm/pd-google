@@ -627,7 +627,6 @@ def test_list_events_with_calendar_id():
 def test_list_events_quick_actions_with_all_params():
     """Test quick actions with all entity and time parameters"""
     # Create an event with a recent date
-    from datetime import datetime, timedelta
     now = datetime.utcnow()
     start = (now + timedelta(days=1)).strftime("%Y-%m-%dT10:00:00")
     end = (now + timedelta(days=1)).strftime("%Y-%m-%dT11:00:00")
@@ -686,7 +685,6 @@ def test_create_event_without_summary_uses_default():
 
 def test_list_events_with_time_min_alias():
     """Test that timeMin query parameter alias works"""
-    from datetime import datetime, timedelta
     time_min = (datetime.utcnow() - timedelta(days=7)).isoformat()
     response = client.get(f"/api/calendar/events?timeMin={time_min}")
     assert response.status_code == 200
@@ -695,7 +693,6 @@ def test_list_events_with_time_min_alias():
 
 def test_list_events_with_time_max_alias():
     """Test that timeMax query parameter alias works"""
-    from datetime import datetime, timedelta
     time_max = (datetime.utcnow() + timedelta(days=30)).isoformat()
     response = client.get(f"/api/calendar/events?timeMax={time_max}")
     assert response.status_code == 200

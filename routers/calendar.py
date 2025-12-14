@@ -79,14 +79,21 @@ class EventCreate(BaseModel):
     def handle_title_alias(cls, data):
         """
         Handle 'title' as an alias for 'summary'.
-        If 'title' is provided but 'summary' is not, use 'title' as 'summary'.
+        
+        Precedence rules:
+        1. If 'summary' is provided, use it (ignore 'title')
+        2. If only 'title' is provided, use 'title' as 'summary'
+        3. If neither is provided, default to 'Untitled Event'
         """
         if isinstance(data, dict):
+            # If summary is provided, use it (title is ignored)
+            if data.get('summary'):
+                return data
             # If title is provided but summary is not, use title as summary
-            if data.get('title') and not data.get('summary'):
+            if data.get('title'):
                 data['summary'] = data['title']
             # If neither is provided, set a default
-            if not data.get('summary') and not data.get('title'):
+            if not data.get('summary'):
                 data['summary'] = 'Untitled Event'
         return data
 
@@ -396,16 +403,18 @@ def list_events(
     if effective_time_max is not None:
         query = query.filter(models.CalendarEvent.end_time <= effective_time_max)
     
-    # If entityType and entityId are provided, we can filter by entity context
-    # For now, we include all events but log the entity context for future filtering
-    # This allows quick actions to pass entity context without breaking the request
+    # TODO: Implement entity-based filtering by attendee emails
+    # When entityType and entityId are provided, events should be filtered based on 
+    # contact emails associated with that entity (via CrmContactService).
+    # For now, we accept these parameters to prevent 422 errors from UI quick actions.
+    # The filtering should query the entity's contacts and match against event attendees.
     if entity_type and entity_id:
         calendar_logger.info(
             action="list_events",
             status="entity_context_provided",
             entity_type=entity_type,
             entity_id=entity_id,
-            message="Entity context provided for quick actions - returning all events in time range"
+            message="Entity context accepted - full entity-based filtering pending implementation"
         )
 
     # Apply pagination and ordering
