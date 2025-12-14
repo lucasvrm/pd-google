@@ -704,3 +704,76 @@ def test_quick_actions_entity_types():
     for entity_type in ["company", "lead", "deal", "contact"]:
         response = client.get(f"/api/calendar/events?entityType={entity_type}&entityId=test-123")
         assert response.status_code == 200, f"entityType={entity_type} should be accepted"
+
+
+# ------------------------------------------------------------
+# CamelCase Support Tests
+# ------------------------------------------------------------
+
+def test_create_event_with_camel_case_fields():
+    """Test that event creation accepts camelCase field names"""
+    response = client.post("/api/calendar/events", json={
+        "summary": "CamelCase Test Event",
+        "startTime": "2024-03-01T10:00:00",
+        "endTime": "2024-03-01T11:00:00",
+        "createMeetLink": True
+    })
+    assert response.status_code == 201, f"CamelCase should be accepted. Response: {response.json()}"
+    data = response.json()
+    assert data["summary"] == "CamelCase Test Event"
+    assert data["meet_link"] is not None
+
+
+def test_create_event_with_snake_case_fields():
+    """Test that event creation still accepts snake_case field names (backward compatibility)"""
+    response = client.post("/api/calendar/events", json={
+        "summary": "SnakeCase Test Event",
+        "start_time": "2024-03-02T10:00:00",
+        "end_time": "2024-03-02T11:00:00",
+        "create_meet_link": True
+    })
+    assert response.status_code == 201
+    data = response.json()
+    assert data["summary"] == "SnakeCase Test Event"
+
+
+def test_create_event_snake_case_takes_precedence():
+    """Test that snake_case fields take precedence over camelCase when both provided"""
+    response = client.post("/api/calendar/events", json={
+        "summary": "Precedence Test",
+        "start_time": "2024-03-03T10:00:00",
+        "startTime": "2024-03-03T12:00:00",  # Should be ignored
+        "end_time": "2024-03-03T11:00:00",
+        "endTime": "2024-03-03T13:00:00",     # Should be ignored
+    })
+    assert response.status_code == 201
+    data = response.json()
+    # The start_time should be 10:00, not 12:00
+    assert "10:00:00" in data["start_time"]
+
+
+def test_create_event_with_camel_case_calendar_id():
+    """Test that calendarId is accepted (camelCase)"""
+    response = client.post("/api/calendar/events", json={
+        "summary": "CalendarId Test",
+        "startTime": "2024-03-04T10:00:00",
+        "endTime": "2024-03-04T11:00:00",
+        "calendarId": "primary"
+    })
+    assert response.status_code == 201
+
+
+def test_create_event_validation_error_provides_field_info():
+    """Test that validation errors provide clear information about missing/invalid fields"""
+    # Missing required fields
+    response = client.post("/api/calendar/events", json={
+        "summary": "Incomplete Event"
+        # Missing startTime/start_time and endTime/end_time
+    })
+    assert response.status_code == 422
+    data = response.json()
+    # Check that the error response includes details about which fields are missing
+    assert "details" in data or "detail" in data
+    # The error should mention the missing fields
+    error_str = str(data)
+    assert "start_time" in error_str.lower() or "starttime" in error_str.lower()
