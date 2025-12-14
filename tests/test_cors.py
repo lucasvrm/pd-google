@@ -120,3 +120,110 @@ def test_cors_headers_on_actual_request():
     assert response.status_code == 200
     assert "access-control-allow-origin" in response.headers
     assert response.headers["access-control-allow-origin"] == "https://pipedesk.vercel.app"
+
+
+def test_cors_preflight_with_authorization_header():
+    """Test that CORS preflight allows Authorization header"""
+    os.environ["USE_MOCK_DRIVE"] = "true"
+    
+    from main import app
+    
+    client = TestClient(app)
+    
+    # Simulate a preflight request with Authorization header (common for JWT auth)
+    response = client.options(
+        "/api/drive/items",
+        headers={
+            "Origin": "https://pipedesk.vercel.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, Content-Type",
+        }
+    )
+    
+    assert response.status_code == 200
+    assert "access-control-allow-origin" in response.headers
+    assert response.headers["access-control-allow-origin"] == "https://pipedesk.vercel.app"
+    assert "access-control-allow-headers" in response.headers
+    # Check that Authorization is in the allowed headers
+    allowed_headers = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed_headers
+    assert "content-type" in allowed_headers
+
+
+def test_cors_preflight_calendar_events():
+    """Test that CORS preflight works for calendar/events endpoint"""
+    os.environ["USE_MOCK_DRIVE"] = "true"
+    
+    from main import app
+    
+    client = TestClient(app)
+    
+    # Test preflight for POST to calendar/events (creating events)
+    response = client.options(
+        "/api/calendar/events",
+        headers={
+            "Origin": "https://pipedesk.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type, Authorization",
+        }
+    )
+    
+    assert response.status_code == 200
+    assert "access-control-allow-origin" in response.headers
+    assert response.headers["access-control-allow-origin"] == "https://pipedesk.vercel.app"
+    assert "access-control-allow-credentials" in response.headers
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_cors_preflight_allows_all_required_methods():
+    """Test that CORS preflight allows all HTTP methods needed for quick actions"""
+    os.environ["USE_MOCK_DRIVE"] = "true"
+    
+    from main import app
+    
+    client = TestClient(app)
+    
+    required_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    
+    for method in required_methods:
+        response = client.options(
+            "/api/drive/items",
+            headers={
+                "Origin": "https://pipedesk.vercel.app",
+                "Access-Control-Request-Method": method,
+            }
+        )
+        
+        assert response.status_code == 200, f"Preflight failed for method {method}"
+        allowed_methods = response.headers.get("access-control-allow-methods", "")
+        assert method in allowed_methods, f"Method {method} not in allowed methods: {allowed_methods}"
+
+
+def test_cors_allows_localhost_3000():
+    """Test that CORS allows requests from localhost:3000 (common dev port)"""
+    os.environ["USE_MOCK_DRIVE"] = "true"
+    
+    # Force reload config to pick up the updated defaults
+    import importlib
+    import config as config_module
+    importlib.reload(config_module)
+    
+    import main as main_module
+    importlib.reload(main_module)
+    
+    from main import app
+    
+    client = TestClient(app)
+    
+    # Simulate a preflight request from localhost:3000
+    response = client.options(
+        "/api/drive/items",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        }
+    )
+    
+    assert response.status_code == 200
+    assert "access-control-allow-origin" in response.headers
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"

@@ -22,8 +22,9 @@ class Config:
     REDIS_DEFAULT_TTL = int(os.getenv("REDIS_DEFAULT_TTL", "180"))
     
     # --- CORS (Segurança do Frontend) ---
-    # Adicionei o seu frontend da Vercel e localhost para desenvolvimento.
-    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "https://pipedesk.vercel.app,http://localhost:5173,http://127.0.0.1:5173")
+    # Production frontend: https://pipedesk.vercel.app
+    # Development: localhost ports for Vite (5173) and common alternatives (3000, 8080)
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "https://pipedesk.vercel.app,http://localhost:5173,http://localhost:3000,http://localhost:8080,http://127.0.0.1:5173,http://127.0.0.1:3000,http://127.0.0.1:8080")
     
     # --- CALENDAR & SLA ---
     CALENDAR_EVENT_RETENTION_DAYS = int(os.getenv("CALENDAR_EVENT_RETENTION_DAYS", "180"))
