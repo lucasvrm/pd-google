@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS leads (
     address_state TEXT,
     last_interaction_at TIMESTAMPTZ,
     priority_score INTEGER DEFAULT 0,
+    disqualified_at TIMESTAMPTZ,
+    disqualification_reason TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -74,6 +76,15 @@ BEGIN
         ALTER TABLE leads ADD COLUMN address_state TEXT;
     END IF;
 
+    -- Disqualification tracking columns
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='disqualified_at') THEN
+        ALTER TABLE leads ADD COLUMN disqualified_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='disqualification_reason') THEN
+        ALTER TABLE leads ADD COLUMN disqualification_reason TEXT;
+    END IF;
+
     -- Legacy columns to drop if present
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='owner_id') THEN
         ALTER TABLE leads DROP COLUMN owner_id;
@@ -99,9 +110,22 @@ CREATE TABLE IF NOT EXISTS lead_activity_stats (
     last_interaction_at TIMESTAMPTZ,
     last_email_at TIMESTAMPTZ,
     last_event_at TIMESTAMPTZ,
+    next_scheduled_event_at TIMESTAMPTZ,
     total_emails INTEGER DEFAULT 0,
     total_events INTEGER DEFAULT 0,
     total_interactions INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 6. Add columns to lead_activity_stats idempotently --------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lead_activity_stats' AND column_name='next_scheduled_event_at') THEN
+        ALTER TABLE lead_activity_stats ADD COLUMN next_scheduled_event_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
+-- 7. Create indexes for new columns (idempotent) ------------------------------
+CREATE INDEX IF NOT EXISTS idx_leads_disqualified_at ON leads(disqualified_at);
+CREATE INDEX IF NOT EXISTS idx_lead_activity_stats_next_scheduled_event_at ON lead_activity_stats(next_scheduled_event_at);
