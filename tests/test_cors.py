@@ -9,6 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 import os
 
+# Required HTTP methods for API operations
+REQUIRED_HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
 
 def test_cors_allows_production_frontend():
     """Test that CORS allows requests from production frontend"""
@@ -183,9 +186,7 @@ def test_cors_preflight_allows_all_required_methods():
     
     client = TestClient(app)
     
-    required_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    
-    for method in required_methods:
+    for method in REQUIRED_HTTP_METHODS:
         response = client.options(
             "/api/drive/items",
             headers={
@@ -202,14 +203,6 @@ def test_cors_preflight_allows_all_required_methods():
 def test_cors_allows_localhost_3000():
     """Test that CORS allows requests from localhost:3000 (common dev port)"""
     os.environ["USE_MOCK_DRIVE"] = "true"
-    
-    # Force reload config to pick up the updated defaults
-    import importlib
-    import config as config_module
-    importlib.reload(config_module)
-    
-    import main as main_module
-    importlib.reload(main_module)
     
     from main import app
     
