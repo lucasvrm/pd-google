@@ -197,23 +197,33 @@ def test_suggest_next_action_qualify():
 
 
 def test_suggest_next_action_monitor():
-    """Test suggest_next_action for active engagement."""
+    """Test suggest_next_action for active engagement - now suggests schedule_meeting.
+    
+    With Sprint 2/3 changes, engagement_score >= 50 without an upcoming meeting
+    triggers 'schedule_meeting' (precedence 6) instead of 'send_follow_up'.
+    """
     now = datetime(2024, 1, 10, tzinfo=timezone.utc)
     
     class MockLead:
         id = "test-lead"
         created_at = now - timedelta(days=5)
         qualified_company_id = None
+        qualified_master_deal_id = None
+        disqualified_at = None
     
     class MockStats:
         last_interaction_at = now - timedelta(days=2)
         last_event_at = None
+        next_scheduled_event_at = None
+        last_call_at = None
+        last_value_asset_at = None
         engagement_score = 50
     
     result = suggest_next_action(MockLead(), MockStats(), now=now)
     
-    assert result["code"] == "send_follow_up"
-    assert "relacionamento ativo" in result["reason"]
+    # With engagement >= 50 and no meeting, we now get schedule_meeting
+    assert result["code"] == "schedule_meeting"
+    assert "reunião" in result["reason"].lower()
 
 
 def test_sales_view_attaches_next_action_and_metrics():

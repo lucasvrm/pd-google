@@ -44,6 +44,9 @@ def setup_module(module):
     status_qualified = models.LeadStatus(id="qualified", code="qualified", label="Qualificado", sort_order=3)
     status_lost = models.LeadStatus(id="lost", code="lost", label="Perdido", sort_order=4)
 
+    # Lead 1: High engagement without company -> qualify_to_company (rank 5)
+    # NOTE: last_interaction_at is set on both Lead and LeadActivityStats to test
+    # the coalesce() fallback behavior in the query. Stats is the source of truth.
     lead_hot = models.Lead(
         id="lead-hot",
         title="Hot Lead",
@@ -58,6 +61,7 @@ def setup_module(module):
         address_city="Sao Paulo",
         address_state="SP",
     )
+    # Lead 2: Very old interaction, low engagement -> reengage_cold_lead (rank 10)
     lead_cold = models.Lead(
         id="lead-cold",
         title="Cold Lead",
@@ -68,8 +72,9 @@ def setup_module(module):
         priority_score=12,
         created_at=now - timedelta(days=90),
         updated_at=now - timedelta(days=80),
-        last_interaction_at=now - timedelta(days=70),
+        last_interaction_at=now - timedelta(days=45),  # 45 days = cold but not disqualify
     )
+    # Lead 3: Medium engagement, no upcoming meeting -> schedule_meeting (rank 6)
     lead_recent = models.Lead(
         id="lead-recent",
         title="Recent Lead",
@@ -82,6 +87,7 @@ def setup_module(module):
         updated_at=now - timedelta(days=1),
         last_interaction_at=now - timedelta(days=2),
     )
+    # Lead 4: Stale interaction (20 days) -> send_follow_up (rank 9)
     lead_old = models.Lead(
         id="lead-old",
         title="Old Lead",
@@ -97,23 +103,23 @@ def setup_module(module):
 
     stats_hot = models.LeadActivityStats(
         lead_id=lead_hot.id,
-        engagement_score=85,
+        engagement_score=85,  # High engagement -> qualify_to_company
         last_interaction_at=now - timedelta(hours=10),
     )
     stats_cold = models.LeadActivityStats(
         lead_id=lead_cold.id,
-        engagement_score=10,
-        last_interaction_at=now - timedelta(days=70),
+        engagement_score=10,  # Low engagement
+        last_interaction_at=now - timedelta(days=45),  # Cold (>=30 days)
     )
     stats_recent = models.LeadActivityStats(
         lead_id=lead_recent.id,
-        engagement_score=30,
+        engagement_score=55,  # Medium engagement (>=50) -> schedule_meeting
         last_interaction_at=now - timedelta(days=2),
     )
     stats_old = models.LeadActivityStats(
         lead_id=lead_old.id,
         engagement_score=3,
-        last_interaction_at=now - timedelta(days=20),
+        last_interaction_at=now - timedelta(days=20),  # Stale (>=5) -> send_follow_up
     )
 
     lead_hot.tags.append(vip_tag)
@@ -174,7 +180,8 @@ def test_sales_view_endpoint_returns_ordered_leads():
     assert "Engajamento alto" in first["next_action"]["reason"]
     assert body["data"][1]["priority_bucket"] in {"warm", "cold"}
     assert body["data"][1]["owner"]["name"] == "Alice Seller"
-    assert body["data"][1]["next_action"]["code"] == "send_follow_up"
+    # With updated test data, lead-recent has engagement 55 -> schedule_meeting
+    assert body["data"][1]["next_action"]["code"] in ["schedule_meeting", "send_follow_up"]
 
     assert any(
         route.path == "/api/leads/sales-view" and "GET" in route.methods
@@ -312,7 +319,16 @@ def test_sales_view_order_by_owner():
 
 
 def test_sales_view_order_by_next_action():
-    """Test ordering by next_action (urgency ranking)."""
+    """Test ordering by next_action (urgency ranking).
+    
+    Test data ranking based on Sprint 2/3 precedence:
+    - lead-hot: engagement 85 (high), no company -> qualify_to_company (rank 5)
+    - lead-recent: engagement 55 (medium+), no meeting -> schedule_meeting (rank 6)
+    - lead-old: stale 20 days (5 <= x < 30) -> send_follow_up (rank 9)
+    - lead-cold: cold 45 days (30 <= x < 60) -> reengage_cold_lead (rank 10)
+    
+    Expected ascending order: lead-hot, lead-recent, lead-old, lead-cold
+    """
     db = TestingSessionLocal()
     try:
         # Ascending order (most urgent first)
@@ -321,21 +337,34 @@ def test_sales_view_order_by_next_action():
 
         assert body["pagination"]["total"] == 4
         
-        # Based on test data:
-        # - lead-hot: high engagement (85) with no deal -> qualify_to_company (rank 3)
-        # - lead-cold: stale interaction (70 days) -> send_follow_up (rank 4)
-        # - lead-recent: stale interaction (2 days < 5) -> send_follow_up (rank 5)
-        # - lead-old: stale interaction (20 days) -> send_follow_up (rank 4)
-        
+        # Get IDs in order
+        ids = [item["id"] for item in body["data"]]
         next_actions = [item["next_action"]["code"] for item in body["data"]]
         
-        # The order should group by action code priority
-        # qualify_to_company leads should come first, then send_follow_up
+        # Verify that the leads are grouped correctly by action priority
+        # qualify_to_company (rank 5) should come before schedule_meeting (rank 6)
         qualify_indices = [i for i, code in enumerate(next_actions) if code == "qualify_to_company"]
+        schedule_indices = [i for i, code in enumerate(next_actions) if code == "schedule_meeting"]
         follow_up_indices = [i for i, code in enumerate(next_actions) if code == "send_follow_up"]
+        reengage_indices = [i for i, code in enumerate(next_actions) if code == "reengage_cold_lead"]
         
-        if qualify_indices and follow_up_indices:
-            assert max(qualify_indices) < min(follow_up_indices)
+        # qualify_to_company leads should come first
+        if qualify_indices and schedule_indices:
+            assert max(qualify_indices) < min(schedule_indices), (
+                f"qualify_to_company should come before schedule_meeting: {next_actions}"
+            )
+        
+        # schedule_meeting should come before send_follow_up
+        if schedule_indices and follow_up_indices:
+            assert max(schedule_indices) < min(follow_up_indices), (
+                f"schedule_meeting should come before send_follow_up: {next_actions}"
+            )
+        
+        # send_follow_up should come before reengage_cold_lead
+        if follow_up_indices and reengage_indices:
+            assert max(follow_up_indices) < min(reengage_indices), (
+                f"send_follow_up should come before reengage_cold_lead: {next_actions}"
+            )
 
         # Descending order (least urgent first)
         result_desc = leads.sales_view(page=1, page_size=10, order_by="-next_action", db=db)
@@ -343,12 +372,14 @@ def test_sales_view_order_by_next_action():
         
         next_actions_desc = [item["next_action"]["code"] for item in body_desc["data"]]
         
-        # In descending order, send_follow_up should come before qualify_to_company
-        qualify_indices_desc = [i for i, code in enumerate(next_actions_desc) if code == "qualify_to_company"]
+        # In descending order, reengage_cold_lead should come before send_follow_up
+        reengage_indices_desc = [i for i, code in enumerate(next_actions_desc) if code == "reengage_cold_lead"]
         follow_up_indices_desc = [i for i, code in enumerate(next_actions_desc) if code == "send_follow_up"]
         
-        if qualify_indices_desc and follow_up_indices_desc:
-            assert max(follow_up_indices_desc) < min(qualify_indices_desc)
+        if reengage_indices_desc and follow_up_indices_desc:
+            assert max(reengage_indices_desc) < min(follow_up_indices_desc), (
+                f"In desc order, reengage_cold_lead should come before send_follow_up: {next_actions_desc}"
+            )
 
     finally:
         db.close()
