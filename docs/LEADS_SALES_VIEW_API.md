@@ -143,3 +143,4 @@ Todos os erros seguem a convenção global de `/api`:
 ## Notas adicionais
 - Os campos complexos já chegam normalizados pelo backend: `tags` como objetos `{id,name,color}`, `owner` como objeto simples, `primary_contact` com `id`/`name`/`role`, `priority_description` derivada do bucket e `next_action` com `code`/`label`/`reason`.
 - Métricas e logs estruturados do endpoint estão descritos em [`docs/SALES_VIEW_OBSERVABILITY.md`](./SALES_VIEW_OBSERVABILITY.md).
+- **Documentação completa de Next Actions:** Para detalhamento de regras, precedência, campos influenciadores e checklist de QA, consulte [`docs/backend/next_actions.md`](./backend/next_actions.md).
