@@ -45,6 +45,8 @@ def setup_module(module):
     status_lost = models.LeadStatus(id="lost", code="lost", label="Perdido", sort_order=4)
 
     # Lead 1: High engagement without company -> qualify_to_company (rank 5)
+    # NOTE: last_interaction_at is set on both Lead and LeadActivityStats to test
+    # the coalesce() fallback behavior in the query. Stats is the source of truth.
     lead_hot = models.Lead(
         id="lead-hot",
         title="Hot Lead",

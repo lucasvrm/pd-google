@@ -30,7 +30,7 @@ def _make_lead(**kwargs):
         "disqualified_at": None,
         "last_interaction_at": None,
     }
-    return SimpleNamespace(**{**defaults, **kwargs})
+    return SimpleNamespace(**defaults | kwargs)
 
 
 def _make_stats(**kwargs):
@@ -44,7 +44,7 @@ def _make_stats(**kwargs):
         "last_call_at": None,
         "last_value_asset_at": None,
     }
-    return SimpleNamespace(**{**defaults, **kwargs})
+    return SimpleNamespace(**defaults | kwargs)
 
 
 # ========== EXISTING TESTS (Updated) ==========

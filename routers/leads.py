@@ -507,7 +507,13 @@ def sales_view(
                         ),
                         6,
                     ),
-                    # Priority 7-8: call_again / send_value_asset (skipped - require optional fields)
+                    # NOTE: Ranks 7-8 are skipped in SQL because they require optional fields
+                    # (last_call_at for call_again, last_value_asset_at for send_value_asset)
+                    # that may not exist in the database schema. The Python service handles
+                    # these cases when the fields are available. Using consistent rank numbers
+                    # (9, 10, 11) ensures the Python and SQL ordering align for leads that
+                    # fall through to these categories.
+                    #
                     # Priority 9: send_follow_up (stale interaction >=5 days but < 30 days)
                     (
                         and_(
