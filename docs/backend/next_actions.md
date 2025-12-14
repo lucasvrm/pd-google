@@ -35,6 +35,8 @@ O serviço `next_action_service.py` analisa os dados de cada lead e suas estatí
 
 ## Lista de Next Actions
 
+Existem **11 códigos únicos** de next_action. A precedência 12 é um fallback que reutiliza o código `send_follow_up`.
+
 | Precedência | Code | Label (PT-BR) | Descrição |
 |:-----------:|------|---------------|-----------|
 | 1 | `prepare_for_meeting` | Preparar para reunião | Reunião futura agendada |
@@ -48,7 +50,9 @@ O serviço `next_action_service.py` analisa os dados de cada lead e suas estatí
 | 9 | `send_follow_up` | Enviar follow-up | Interação stale (5–29 dias) |
 | 10 | `reengage_cold_lead` | Reengajar lead frio | Lead frio (30–59 dias sem interação) |
 | 11 | `disqualify` | Desqualificar / encerrar | Muito tempo sem interação + baixo engajamento |
-| 12 | `send_follow_up` | Enviar follow-up | Default (manter relacionamento ativo) |
+| 12 | `send_follow_up` | Enviar follow-up | **Default** (manter relacionamento ativo) |
+
+**Nota:** Os códigos das precedências 9 e 12 são iguais (`send_follow_up`), mas a precedência 9 é acionada por critérios específicos (interação stale 5–29 dias), enquanto a 12 é o comportamento padrão quando nenhuma outra regra se aplica.
 
 ---
 
@@ -443,7 +447,7 @@ Use este checklist para validar manualmente o comportamento do endpoint:
 
 - [ ] **Teste 11:** Cada item retorna `next_action` com estrutura correta
   - Campos: `code`, `label`, `reason`
-  - `code` é um dos 11 valores válidos
+  - `code` é um dos 11 valores únicos válidos (nota: `send_follow_up` pode vir de precedência 9 ou 12)
   - `label` está em português
   - `reason` explica o motivo
 
@@ -459,15 +463,15 @@ Use este checklist para validar manualmente o comportamento do endpoint:
 
 O endpoint implementa a ordenação por `next_action` de duas formas:
 
-1. **SQL (CASE):** Para ordenação eficiente no banco, usa um `CASE` que mapeia as condições principais para ranks numéricos (1–12). Isso permite ordenação rápida sem carregar todos os leads em memória.
+1. **SQL (CASE):** Para ordenação eficiente no banco, usa um `CASE` que mapeia as condições principais para ranks numéricos (1–12). Isso permite ordenação rápida sem carregar todos os leads em memória. A precedência 12 é o fallback default.
 
 2. **Python (next_action_service):** Para cada lead retornado, a função `suggest_next_action()` é chamada para calcular o `next_action` exato com o `reason` detalhado.
 
-**Nota:** As regras 7 (`call_again`) e 8 (`send_value_asset`) dependem de campos opcionais (`last_call_at`, `last_value_asset_at`) que podem não existir no schema do banco. Nesses casos, essas regras são puladas na avaliação.
+**Nota sobre códigos duplicados:** O código `send_follow_up` aparece em duas precedências (9 e 12). A precedência 9 é acionada quando há interação stale (5–29 dias), enquanto a 12 é o fallback quando nenhuma outra regra se aplica. O `reason` retornado diferencia os casos.
 
 ### Campos Opcionais
 
-Os seguintes campos são opcionais e podem não existir em todas as instalações:
+As regras 7 (`call_again`) e 8 (`send_value_asset`) dependem de campos opcionais que podem não existir no schema do banco. Nesses casos, essas regras são puladas na avaliação:
 
 - `LeadActivityStats.last_call_at`
 - `LeadActivityStats.last_value_asset_at`

@@ -604,7 +604,7 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 **Objective:** Documentar claramente as regras finais das next_actions e a precedência, com checklist de QA manual.
 
 1.  ✅ Criada documentação completa em `docs/backend/next_actions.md`:
-    - Lista de 11 next_actions com code, label, critérios e precedência
+    - Lista de 11 códigos únicos de next_action (com 12 níveis de precedência)
     - Campos do Lead e LeadActivityStats que influenciam cada regra
     - Parâmetros de configuração (thresholds)
     - Detalhamento de cada regra com exemplos de retorno
