@@ -35,14 +35,15 @@ This document outlines the comprehensive execution plan for integrating the `pd-
         *   `watch_events()` - Registers webhook channels for sync
         *   `stop_channel()` - Stops webhook channels
     4.  ✅ **Calendar Router:** Full CRUD API implementation in `routers/calendar.py` with:
-        *   POST `/calendar/events` - Create events with Meet links
-        *   GET `/calendar/events` - List events with filters and pagination
+        *   POST `/calendar/events` - Create events with Meet links (supports `title` alias for `summary`)
+        *   GET `/calendar/events` - List events with filters, pagination, and quick actions support (`entityType`, `entityId`, `calendarId`)
         *   GET `/calendar/events/{id}` - Get event details
         *   PATCH `/calendar/events/{id}` - Update events
         *   DELETE `/calendar/events/{id}` - Cancel events (soft delete)
         *   POST `/calendar/watch` - Register webhook channel
     5.  ✅ **Scope Configuration:** Google Calendar scopes properly configured
     6.  ✅ **Meet Link Generation:** Automatic Google Meet link creation with `conferenceData`
+    7.  ✅ **Quick Actions Support:** (BE-2) Added `entityType`, `entityId`, `calendarId` params with safe time defaults
 
 *   **Dependencies:** Supabase database access, Google Service Account with Calendar API enabled
 *   **Completion Criteria:** All calendar CRUD operations functional with local database persistence

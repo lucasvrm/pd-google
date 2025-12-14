@@ -316,6 +316,7 @@ Common error scenarios:
 ### 1. Create Calendar Event
 
 Creates a new event in Google Calendar with optional Google Meet link generation.
+Supports quick actions with flexible field naming.
 
 **Endpoint:** `POST /api/calendar/events`
 
@@ -328,17 +329,30 @@ Creates a new event in Google Calendar with optional Google Meet link generation
   "start_time": "2024-01-15T14:00:00Z",
   "end_time": "2024-01-15T15:00:00Z",
   "attendees": ["sales@company.com", "client@example.com"],
-  "create_meet_link": true
+  "create_meet_link": true,
+  "calendar_id": "primary"
 }
 ```
 
 **Request Fields:**
-- `summary` (string, required): Event title/subject
+- `summary` (string, optional): Event title/subject. If not provided, defaults to "Untitled Event"
+- `title` (string, optional): Alias for `summary` - the UI can send either field
 - `description` (string, optional): Event details/notes
 - `start_time` (datetime, required): Event start time in ISO 8601 format
 - `end_time` (datetime, required): Event end time in ISO 8601 format
 - `attendees` (array of strings, optional): List of attendee email addresses
 - `create_meet_link` (boolean, optional, default: `true`): Whether to generate a Google Meet link
+- `calendar_id` (string, optional, default: `"primary"`): Calendar ID to create the event in
+
+**Quick Action Example (minimal payload):**
+
+```json
+{
+  "title": "Quick Meeting",
+  "start_time": "2024-01-15T14:00:00Z",
+  "end_time": "2024-01-15T15:00:00Z"
+}
+```
 
 **Response:** `201 Created`
 
@@ -378,6 +392,7 @@ The `meet_link` field in the response contains the Google Meet video conference 
 ### 2. List Calendar Events
 
 Retrieves calendar events from the local database mirror with filtering and pagination.
+Supports quick actions context with entity type and ID parameters.
 
 **Endpoint:** `GET /api/calendar/events`
 
@@ -385,8 +400,11 @@ Retrieves calendar events from the local database mirror with filtering and pagi
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `time_min` | datetime | No | - | Filter events starting after this datetime (ISO 8601) |
-| `time_max` | datetime | No | - | Filter events ending before this datetime (ISO 8601) |
+| `timeMin` | datetime | No | -30 days* | Filter events starting after this datetime (ISO 8601). *Defaults to 30 days ago when using entity context |
+| `timeMax` | datetime | No | +90 days* | Filter events ending before this datetime (ISO 8601). *Defaults to 90 days from now when using entity context |
+| `entityType` | string | No | - | Entity type for quick actions context (`company`, `lead`, `deal`, `contact`) |
+| `entityId` | string | No | - | Entity ID for quick actions context |
+| `calendarId` | string | No | `primary` | Calendar ID to query |
 | `status` | string | No | - | Filter by event status (`confirmed`, `tentative`, `cancelled`) |
 | `limit` | integer | No | 100 | Maximum number of results (max: 500) |
 | `offset` | integer | No | 0 | Number of results to skip for pagination |
@@ -397,8 +415,14 @@ Retrieves calendar events from the local database mirror with filtering and pagi
 # Get all upcoming events
 GET /api/calendar/events
 
+# Quick action: Get events for a lead (with safe time defaults)
+GET /api/calendar/events?entityType=lead&entityId=lead-123
+
+# Quick action: Get events for a deal with custom calendar
+GET /api/calendar/events?entityType=deal&entityId=deal-456&calendarId=primary
+
 # Get events in January 2024
-GET /api/calendar/events?time_min=2024-01-01T00:00:00Z&time_max=2024-02-01T00:00:00Z
+GET /api/calendar/events?timeMin=2024-01-01T00:00:00Z&timeMax=2024-02-01T00:00:00Z
 
 # Get cancelled events
 GET /api/calendar/events?status=cancelled
@@ -440,6 +464,8 @@ GET /api/calendar/events?limit=20&offset=20
 - By default, cancelled events are excluded from results unless explicitly requested via `status=cancelled`
 - Events are ordered by start time (earliest first)
 - The local database is synchronized from Google Calendar via webhooks
+- When `entityType` and `entityId` are provided, safe time defaults are applied (last 30 days to +90 days)
+- The `calendarId` parameter defaults to "primary" when not specified
 
 ---
 
