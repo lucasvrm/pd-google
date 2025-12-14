@@ -8,13 +8,46 @@ The backend uses FastAPI's `CORSMiddleware` to handle CORS preflight requests an
 
 ## Configuration
 
-### Environment Variable
+### Environment Variables
+
+#### CORS_ORIGINS
 
 CORS origins are configured via the `CORS_ORIGINS` environment variable:
 
 ```bash
 CORS_ORIGINS=https://pipedesk.vercel.app,http://localhost:5173,http://localhost:3000
 ```
+
+**Origin Normalization:** The `CORS_ORIGINS` value is automatically normalized to handle common configuration issues:
+- Whitespace is trimmed from each origin
+- Surrounding quotes (`"` and `'`) are removed
+- Trailing slashes (`/`) are stripped
+- Empty entries are filtered out
+
+This means all of these formats will work correctly:
+```bash
+# All of these are valid:
+CORS_ORIGINS="https://pipedesk.vercel.app" , "http://localhost:3000/"
+CORS_ORIGINS='https://pipedesk.vercel.app/', 'http://localhost:3000'
+CORS_ORIGINS=  https://pipedesk.vercel.app  ,  http://localhost:3000  
+```
+
+#### CORS_ORIGIN_REGEX (Optional)
+
+For Vercel preview deployments or other dynamic origins, you can configure a regex pattern:
+
+```bash
+# Allow any Vercel preview deployment for pipedesk project
+CORS_ORIGIN_REGEX=https://pipedesk-[a-z0-9]+-[a-z0-9]+\.vercel\.app
+
+# Allow any subdomain
+CORS_ORIGIN_REGEX=https://.*\.yourcompany\.com
+```
+
+**Important:** 
+- This is a Python regex pattern (not a glob pattern)
+- Use restrictive patterns to avoid security issues
+- The regex must match the entire origin
 
 ### Default Origins
 
@@ -102,6 +135,7 @@ curl -X GET \
 
 1. **Origin not in allowed list**: Add the origin to `CORS_ORIGINS`
 2. **Wildcard with credentials**: You cannot use `*` for origins when `allow_credentials=True`
+3. **Malformed CORS_ORIGINS**: Check for extra quotes or invalid entries - use the normalization feature
 
 ### Error: Authorization header not allowed
 
@@ -125,6 +159,7 @@ The test suite covers:
 - Preflight with Authorization header
 - All HTTP methods
 - Calendar API endpoints
+- Origin normalization (quotes, whitespace, trailing slashes)
 
 ## Implementation Details
 
@@ -132,17 +167,27 @@ The CORS middleware is configured in `main.py`:
 
 ```python
 from fastapi.middleware.cors import CORSMiddleware
-from config import config
+from config import config, normalize_cors_origins
 
-# Parse CORS origins from config (comma-separated string)
-origins = [origin.strip() for origin in config.CORS_ORIGINS.split(",")]
+# Parse and normalize CORS origins from config (comma-separated string)
+# Uses normalize_cors_origins() to handle: whitespace, quotes, trailing slashes, empty entries
+origins = normalize_cors_origins(config.CORS_ORIGINS)
+
+# Build CORS middleware parameters
+cors_params = {
+    "allow_origins": origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+
+# Add regex support for Vercel preview deployments if configured
+if config.CORS_ORIGIN_REGEX:
+    cors_params["allow_origin_regex"] = config.CORS_ORIGIN_REGEX
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_params,
 )
 ```
 
@@ -150,3 +195,4 @@ The middleware:
 1. Intercepts OPTIONS preflight requests
 2. Returns 200 with appropriate CORS headers
 3. Adds CORS headers to actual requests from allowed origins
+4. Supports both explicit origins and regex patterns for dynamic origins

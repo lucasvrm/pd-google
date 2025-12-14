@@ -64,28 +64,56 @@ class EventCreate(BaseModel):
     
     Supports both 'summary' and 'title' as the event title for flexibility.
     The UI can send either field - 'title' is an alias for 'summary'.
+    
+    Also supports both camelCase and snake_case for field names:
+    - start_time / startTime
+    - end_time / endTime
+    - create_meet_link / createMeetLink
+    - calendar_id / calendarId
     """
     summary: Optional[str] = Field(default=None, description="Event title/subject")
     title: Optional[str] = Field(default=None, description="Alias for summary - event title/subject")
     description: Optional[str] = None
-    start_time: datetime = Field(..., alias="start_time", description="Event start datetime in ISO format")
-    end_time: datetime = Field(..., alias="end_time", description="Event end datetime in ISO format")
+    start_time: datetime = Field(..., description="Event start datetime in ISO format")
+    end_time: datetime = Field(..., description="Event end datetime in ISO format")
     attendees: Optional[List[str]] = Field(default_factory=list, description="List of email addresses to invite")
     create_meet_link: bool = Field(default=True, description="Whether to generate a Google Meet link")
     calendar_id: Optional[str] = Field(default="primary", description="Calendar ID, defaults to 'primary'")
     
     @model_validator(mode='before')
     @classmethod
-    def handle_title_alias(cls, data):
+    def handle_aliases_and_camel_case(cls, data):
         """
-        Handle 'title' as an alias for 'summary'.
+        Handle field aliases and camelCase to snake_case conversion.
         
-        Precedence rules:
-        1. If 'summary' is provided, use it (ignore 'title')
-        2. If only 'title' is provided, use 'title' as 'summary'
-        3. If neither is provided, default to 'Untitled Event'
+        Supports:
+        - 'title' as alias for 'summary'
+        - 'startTime' as alias for 'start_time'
+        - 'endTime' as alias for 'end_time'
+        - 'createMeetLink' as alias for 'create_meet_link'
+        - 'calendarId' as alias for 'calendar_id'
+        
+        Precedence: snake_case takes priority over camelCase if both are provided.
         """
         if isinstance(data, dict):
+            # Handle camelCase to snake_case conversions
+            # startTime -> start_time (if start_time not provided)
+            if 'startTime' in data and 'start_time' not in data:
+                data['start_time'] = data['startTime']
+            
+            # endTime -> end_time (if end_time not provided)
+            if 'endTime' in data and 'end_time' not in data:
+                data['end_time'] = data['endTime']
+            
+            # createMeetLink -> create_meet_link (if create_meet_link not provided)
+            if 'createMeetLink' in data and 'create_meet_link' not in data:
+                data['create_meet_link'] = data['createMeetLink']
+            
+            # calendarId -> calendar_id (if calendar_id not provided)
+            if 'calendarId' in data and 'calendar_id' not in data:
+                data['calendar_id'] = data['calendarId']
+            
+            # Handle title -> summary alias
             # If summary is provided, use it (title is ignored)
             if data.get('summary'):
                 return data

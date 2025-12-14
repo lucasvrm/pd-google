@@ -23,7 +23,7 @@ from services.scheduler_service import scheduler_service
 from contextlib import asynccontextmanager
 import logging
 import asyncio
-from config import config
+from config import config, normalize_cors_origins
 
 # Configure Logging
 import logging_config # This initializes logging
@@ -83,15 +83,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Parse CORS origins from config (comma-separated string)
-origins = [origin.strip() for origin in config.CORS_ORIGINS.split(",")]
+# Parse and normalize CORS origins from config (comma-separated string)
+# Uses normalize_cors_origins() to handle: whitespace, quotes, trailing slashes, empty entries
+origins = normalize_cors_origins(config.CORS_ORIGINS)
+
+# Log normalized origins for debugging
+logger.info(f"CORS allowed origins: {origins}")
+
+# Build CORS middleware parameters
+cors_params = {
+    "allow_origins": origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+
+# Add regex support for Vercel preview deployments if configured
+if config.CORS_ORIGIN_REGEX:
+    cors_params["allow_origin_regex"] = config.CORS_ORIGIN_REGEX
+    logger.info(f"CORS origin regex enabled: {config.CORS_ORIGIN_REGEX}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_params,
 )
 
 

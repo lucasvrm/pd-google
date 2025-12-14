@@ -220,3 +220,73 @@ def test_cors_allows_localhost_3000():
     assert response.status_code == 200
     assert "access-control-allow-origin" in response.headers
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+# ------------------------------------------------------------
+# CORS Origin Normalization Tests
+# ------------------------------------------------------------
+
+def test_normalize_cors_origins_basic():
+    """Test basic origin normalization"""
+    from config import normalize_cors_origins
+    
+    result = normalize_cors_origins("https://example.com, http://localhost:3000")
+    assert result == ["https://example.com", "http://localhost:3000"]
+
+
+def test_normalize_cors_origins_with_whitespace():
+    """Test origin normalization with extra whitespace"""
+    from config import normalize_cors_origins
+    
+    result = normalize_cors_origins("  https://example.com  ,   http://localhost:3000   ")
+    assert result == ["https://example.com", "http://localhost:3000"]
+
+
+def test_normalize_cors_origins_with_quotes():
+    """Test origin normalization with quoted entries"""
+    from config import normalize_cors_origins
+    
+    # Double quotes
+    result = normalize_cors_origins('"https://example.com", "http://localhost:3000"')
+    assert result == ["https://example.com", "http://localhost:3000"]
+    
+    # Single quotes
+    result = normalize_cors_origins("'https://example.com', 'http://localhost:3000'")
+    assert result == ["https://example.com", "http://localhost:3000"]
+
+
+def test_normalize_cors_origins_with_trailing_slashes():
+    """Test origin normalization removes trailing slashes"""
+    from config import normalize_cors_origins
+    
+    result = normalize_cors_origins("https://example.com/, http://localhost:3000/")
+    assert result == ["https://example.com", "http://localhost:3000"]
+    
+    # Multiple trailing slashes
+    result = normalize_cors_origins("https://example.com///")
+    assert result == ["https://example.com"]
+
+
+def test_normalize_cors_origins_filters_empty_entries():
+    """Test origin normalization filters out empty entries"""
+    from config import normalize_cors_origins
+    
+    result = normalize_cors_origins("https://example.com, , ,  , http://localhost:3000")
+    assert result == ["https://example.com", "http://localhost:3000"]
+
+
+def test_normalize_cors_origins_empty_string():
+    """Test origin normalization with empty string"""
+    from config import normalize_cors_origins
+    
+    result = normalize_cors_origins("")
+    assert result == []
+
+
+def test_normalize_cors_origins_combined_edge_cases():
+    """Test origin normalization with combined edge cases"""
+    from config import normalize_cors_origins
+    
+    # Combines: whitespace, quotes, trailing slashes, and empty entries
+    result = normalize_cors_origins('  "https://example.com/"  , \'http://localhost:3000/\' , ,  ')
+    assert result == ["https://example.com", "http://localhost:3000"]
