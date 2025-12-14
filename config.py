@@ -1,6 +1,5 @@
 import os
-import re
-from typing import List, Optional
+from typing import List
 
 
 def normalize_cors_origins(origins_str: str) -> List[str]:
