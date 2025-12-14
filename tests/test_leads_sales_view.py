@@ -279,7 +279,7 @@ def test_sales_view_order_by_owner():
     """Test ordering by owner name (User.name)."""
     db = TestingSessionLocal()
     try:
-        # Ascending order (Alice Seller < Bob Manager alphabetically)
+        # Ascending order: Alice Seller comes before Bob Manager alphabetically (A < B)
         result = leads.sales_view(page=1, page_size=10, order_by="owner", db=db)
         body = result.model_dump()
 
