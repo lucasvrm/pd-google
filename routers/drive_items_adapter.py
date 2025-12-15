@@ -63,7 +63,7 @@ def get_drive_items(
     Adapter endpoint for frontend compatibility.
     
     This endpoint wraps the existing /drive/{entity_type}/{entity_id} logic
-    but returns data in the format expected by the frontend: { items, total }
+    but returns data in the format expected by the frontend: { items, total, root_url }
     
     Query Parameters:
     - entityType: Entity type (company, lead, deal)
@@ -74,6 +74,7 @@ def get_drive_items(
     Returns:
     - items: Paginated list of drive items
     - total: Total number of items before pagination
+    - root_url: Direct URL to the entity's root folder in Google Drive
     """
     try:
         # 0. Validate Entity Type
