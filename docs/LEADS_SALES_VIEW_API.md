@@ -20,7 +20,7 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
   - `priority`: ordena por score de prioridade (maior primeiro por padrão)
   - `last_interaction`: ordena por data da última interação (mais recente primeiro por padrão)
   - `created_at`: ordena por data de criação (mais recente primeiro por padrão)
-  - `status`: ordena por `LeadStatus.sort_order` (menor = mais urgente por padrão)
+  - `status`: ordena por `LeadStatus.sort_order` (menor = mais urgente por padrão). Dentro do mesmo status, leads são ordenados por `created_at` (mais recente primeiro) como tie-breaker para ordenação determinística.
   - `owner`: ordena por nome do responsável (User.name) em ordem alfabética
   - `next_action`: ordena por urgência da próxima ação sugerida, usando ranking:
      1. `prepare_for_meeting` - Reunião futura agendada

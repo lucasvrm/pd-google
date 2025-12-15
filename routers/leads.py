@@ -409,13 +409,16 @@ def sales_view(
                     )
             elif order_field == "status":
                 # Order by LeadStatus.sort_order (lower is more urgent)
+                # Add tie-breaker by created_at for deterministic ordering
                 if not order_desc:
                     base_query = base_query.order_by(
-                        models.LeadStatus.sort_order.asc().nullslast()
+                        models.LeadStatus.sort_order.asc().nullslast(),
+                        models.Lead.created_at.desc(),
                     )
                 else:
                     base_query = base_query.order_by(
-                        models.LeadStatus.sort_order.desc().nullsfirst()
+                        models.LeadStatus.sort_order.desc().nullsfirst(),
+                        models.Lead.created_at.asc(),
                     )
             elif order_field == "owner":
                 # Order by User.name alphabetically
