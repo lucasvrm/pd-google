@@ -104,7 +104,7 @@ class TestDriveItemsEndpoint:
     """Test the /api/drive/items endpoint"""
 
     def test_get_items_returns_correct_structure(self, client):
-        """Test that endpoint returns the expected {items, total} structure"""
+        """Test that endpoint returns the expected {items, total, root_url} structure"""
         response = client.get(
             "/api/drive/items?entityType=deal&entityId=deal-items-1",
             headers={"x-user-id": "u1", "x-user-role": "manager"}
@@ -116,6 +116,7 @@ class TestDriveItemsEndpoint:
         # Check response structure
         assert "items" in data
         assert "total" in data
+        assert "root_url" in data
         assert isinstance(data["items"], list)
         assert isinstance(data["total"], int)
 
@@ -400,3 +401,81 @@ class TestDriveItemsQueryParameters:
         # Should return empty items but total should still be accurate
         assert isinstance(data["items"], list)
         assert isinstance(data["total"], int)
+
+
+class TestRootUrlField:
+    """Test the root_url field in the response"""
+
+    def test_root_url_returned_when_folder_created(self, client):
+        """Test that root_url is returned when a new folder is created"""
+        # First request will create the folder structure
+        response = client.get(
+            "/api/drive/items?entityType=lead&entityId=lead-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # root_url should be present in the response
+        assert "root_url" in data
+        # The mock drive service generates URLs, so it should have a value
+        # (or can be None if the mock doesn't provide webViewLink)
+        assert data["root_url"] is None or isinstance(data["root_url"], str)
+
+    def test_root_url_returned_when_folder_exists(self, client):
+        """Test that root_url is returned when the folder already exists"""
+        # First call creates the folder
+        client.get(
+            "/api/drive/items?entityType=deal&entityId=deal-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        # Second call should return root_url from the existing folder
+        response = client.get(
+            "/api/drive/items?entityType=deal&entityId=deal-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # root_url should be present
+        assert "root_url" in data
+        assert data["root_url"] is None or isinstance(data["root_url"], str)
+
+    def test_root_url_for_company_entity(self, client):
+        """Test that root_url is returned for company entity type"""
+        response = client.get(
+            "/api/drive/items?entityType=company&entityId=comp-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert "root_url" in data
+        assert data["root_url"] is None or isinstance(data["root_url"], str)
+
+    def test_root_url_consistent_across_calls(self, client):
+        """Test that root_url is consistent across multiple calls"""
+        # First call
+        response1 = client.get(
+            "/api/drive/items?entityType=lead&entityId=lead-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        assert response1.status_code == 200
+        data1 = response1.json()
+        
+        # Second call
+        response2 = client.get(
+            "/api/drive/items?entityType=lead&entityId=lead-items-1",
+            headers={"x-user-id": "u1", "x-user-role": "admin"}
+        )
+        
+        assert response2.status_code == 200
+        data2 = response2.json()
+        
+        # root_url should be the same across calls
+        assert data1["root_url"] == data2["root_url"]
