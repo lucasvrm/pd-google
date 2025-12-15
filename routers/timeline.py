@@ -42,6 +42,19 @@ timeline_logger = StructuredLogger(
     service="timeline", logger_name="pipedesk_drive.timeline"
 )
 
+# Generic email domains to exclude from company domain matching
+# These are common public email providers that don't represent a company domain
+GENERIC_EMAIL_DOMAINS = (
+    "gmail.com",
+    "outlook.com",
+    "hotmail.com",
+    "yahoo.com",
+    "yahoo.com.br",
+    "live.com",
+    "icloud.com",
+    "aol.com",
+)
+
 
 def get_db():
     db = SessionLocal()
@@ -448,10 +461,6 @@ def _get_lead_company_domain(db: Session, lead_id: str) -> Optional[str]:
     Returns:
         Company domain (lowercase) or None
     """
-    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
-    if not lead:
-        return None
-
     # Extract domain from the lead's contacts (non-generic domains)
     lead_contacts = db.query(models.LeadContact).filter(
         models.LeadContact.lead_id == lead_id
@@ -460,7 +469,7 @@ def _get_lead_company_domain(db: Session, lead_id: str) -> Optional[str]:
     for lc in lead_contacts:
         if lc.contact and lc.contact.email:
             domain = _extract_email_domain(lc.contact.email)
-            if domain and not domain.endswith(("gmail.com", "outlook.com", "hotmail.com", "yahoo.com")):
+            if domain and not domain.endswith(GENERIC_EMAIL_DOMAINS):
                 return domain
 
     return None
