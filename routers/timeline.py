@@ -5,7 +5,7 @@ Provides a single endpoint for fetching all activities related to a CRM entity.
 Aggregates data from:
 - Calendar Events (meetings)
 - Audit Logs (entity changes)
-- Emails (placeholder for future implementation)
+- Emails (Gmail integration)
 
 This is the "single source of truth" for the Lead/Deal View timeline.
 """
@@ -14,7 +14,7 @@ import json
 import traceback
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ from schemas.timeline import (
 )
 from utils.structured_logging import StructuredLogger
 import models
+from services.google_gmail_service import GoogleGmailService
 
 router = APIRouter(
     prefix="/api/timeline",
@@ -387,29 +388,333 @@ def _fetch_audit_logs(
     return entries
 
 
-def _fetch_emails_placeholder(
-    entity_type: str,
-    entity_id: str
-) -> List[TimelineEntry]:
+def _extract_email_domain(email: str) -> Optional[str]:
     """
-    Placeholder for email fetching.
-
-    This is a placeholder for future Gmail integration to fetch
-    emails related to the entity.
+    Extract the domain from an email address.
 
     Args:
-        entity_type: Type of entity (lead, deal, contact)
-        entity_id: UUID of the entity
+        email: Email address string
 
     Returns:
-        Empty list (placeholder)
+        Domain string (lowercase) or None if invalid
     """
-    # TODO: Implement Gmail API integration to fetch emails
-    # related to the entity by:
-    # - Contact email matching
-    # - Thread/conversation linking
-    # - Subject/body content matching
-    return []
+    if not email or "@" not in email:
+        return None
+    try:
+        # Handle "Name <email@domain.com>" format
+        if "<" in email and ">" in email:
+            email = email.split("<")[1].split(">")[0]
+        return email.strip().lower().split("@")[1]
+    except (IndexError, AttributeError):
+        return None
+
+
+def _get_lead_contact_emails(db: Session, lead_id: str) -> Set[str]:
+    """
+    Get all contact emails associated with a lead.
+
+    Args:
+        db: Database session
+        lead_id: UUID of the lead
+
+    Returns:
+        Set of lowercase email addresses
+    """
+    emails: Set[str] = set()
+
+    # Get contacts linked to this lead via lead_contacts junction table
+    lead_contacts = db.query(models.LeadContact).filter(
+        models.LeadContact.lead_id == lead_id
+    ).all()
+
+    for lc in lead_contacts:
+        if lc.contact and lc.contact.email:
+            emails.add(lc.contact.email.strip().lower())
+
+    return emails
+
+
+def _get_lead_company_domain(db: Session, lead_id: str) -> Optional[str]:
+    """
+    Get the company domain associated with a lead.
+
+    This is used for matching emails by domain when no direct contact email matches.
+    Extracts the domain from the lead's contacts, preferring non-generic email domains.
+
+    Args:
+        db: Database session
+        lead_id: UUID of the lead
+
+    Returns:
+        Company domain (lowercase) or None
+    """
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        return None
+
+    # Extract domain from the lead's contacts (non-generic domains)
+    lead_contacts = db.query(models.LeadContact).filter(
+        models.LeadContact.lead_id == lead_id
+    ).all()
+
+    for lc in lead_contacts:
+        if lc.contact and lc.contact.email:
+            domain = _extract_email_domain(lc.contact.email)
+            if domain and not domain.endswith(("gmail.com", "outlook.com", "hotmail.com", "yahoo.com")):
+                return domain
+
+    return None
+
+
+def _build_gmail_search_query(emails: Set[str], company_domain: Optional[str] = None) -> Optional[str]:
+    """
+    Build a Gmail search query to find emails related to the given contacts.
+
+    Args:
+        emails: Set of email addresses to search for
+        company_domain: Optional company domain for broader matching
+
+    Returns:
+        Gmail search query string or None if no valid search criteria
+    """
+    if not emails and not company_domain:
+        return None
+
+    query_parts: List[str] = []
+
+    # Add specific email addresses
+    for email in emails:
+        # Search for emails from or to these contacts
+        query_parts.append(f"(from:{email} OR to:{email})")
+
+    # Add company domain matching if available and not a generic domain
+    if company_domain:
+        query_parts.append(f"(from:*@{company_domain} OR to:*@{company_domain})")
+
+    if not query_parts:
+        return None
+
+    # Combine with OR to get all related emails
+    return " OR ".join(query_parts)
+
+
+def _parse_email_addresses(header_value: Optional[str]) -> List[str]:
+    """
+    Parse email addresses from a header value.
+
+    Handles formats like:
+    - "email@example.com"
+    - "Name <email@example.com>"
+    - "email1@example.com, email2@example.com"
+
+    Args:
+        header_value: Raw header value from email
+
+    Returns:
+        List of email addresses (lowercase)
+    """
+    if not header_value:
+        return []
+
+    emails: List[str] = []
+    # Split by comma for multiple addresses
+    parts = header_value.split(",")
+
+    for part in parts:
+        part = part.strip()
+        if "<" in part and ">" in part:
+            # Extract email from "Name <email@example.com>" format
+            try:
+                email = part.split("<")[1].split(">")[0].strip().lower()
+                if email:
+                    emails.append(email)
+            except IndexError:
+                continue
+        elif "@" in part:
+            # Plain email address
+            emails.append(part.strip().lower())
+
+    return emails
+
+
+def _fetch_emails_from_gmail(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    max_results: int = 50
+) -> List[TimelineEntry]:
+    """
+    Fetch emails from Gmail related to the entity.
+
+    For leads, this searches for emails to/from/cc/bcc contacts associated with the lead.
+    Also matches by company domain when applicable.
+
+    Args:
+        db: Database session
+        entity_type: Type of entity (lead, deal, contact)
+        entity_id: UUID of the entity
+        max_results: Maximum number of emails to fetch
+
+    Returns:
+        List of TimelineEntry objects for emails
+    """
+    entries: List[TimelineEntry] = []
+
+    # Get contact emails based on entity type
+    contact_emails: Set[str] = set()
+    company_domain: Optional[str] = None
+
+    if entity_type == "lead":
+        contact_emails = _get_lead_contact_emails(db, entity_id)
+        company_domain = _get_lead_company_domain(db, entity_id)
+    elif entity_type == "contact":
+        # For contacts, search by the contact's own email
+        contact = db.query(models.Contact).filter(models.Contact.id == entity_id).first()
+        if contact and contact.email:
+            contact_emails.add(contact.email.strip().lower())
+    # For deals, we could expand to search by company contacts (future enhancement)
+
+    # Build Gmail search query
+    search_query = _build_gmail_search_query(contact_emails, company_domain)
+
+    if not search_query:
+        timeline_logger.info(
+            action="fetch_emails",
+            status="skipped",
+            message="No contact emails found for entity",
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        return []
+
+    try:
+        # Initialize Gmail service
+        gmail_service = GoogleGmailService()
+
+        # Check if service is properly configured
+        gmail_service._check_auth()
+
+        timeline_logger.info(
+            action="fetch_emails",
+            status="searching",
+            message="Searching Gmail for related emails",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            contact_count=len(contact_emails),
+            has_company_domain=bool(company_domain),
+        )
+
+        # Search for messages
+        result = gmail_service.list_messages(
+            query=search_query,
+            max_results=max_results
+        )
+
+        messages = result.get("messages", [])
+
+        if not messages:
+            timeline_logger.info(
+                action="fetch_emails",
+                status="no_results",
+                message="No emails found matching search criteria",
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+            return []
+
+        # Fetch message details and convert to timeline entries
+        for msg_ref in messages:
+            try:
+                msg_data = gmail_service.get_message(msg_ref["id"], format="metadata")
+                headers = gmail_service._parse_headers(
+                    msg_data.get("payload", {}).get("headers", [])
+                )
+
+                # Parse timestamp from internal date
+                timestamp: Optional[datetime] = None
+                if "internalDate" in msg_data:
+                    try:
+                        timestamp = datetime.fromtimestamp(
+                            int(msg_data["internalDate"]) / 1000,
+                            tz=timezone.utc
+                        )
+                    except (ValueError, TypeError):
+                        timestamp = None
+
+                if not timestamp:
+                    # Skip messages without valid timestamp
+                    continue
+
+                # Parse email addresses
+                from_emails = _parse_email_addresses(headers.get("from"))
+                to_emails = _parse_email_addresses(headers.get("to"))
+                cc_emails = _parse_email_addresses(headers.get("cc"))
+                bcc_emails = _parse_email_addresses(headers.get("bcc"))
+
+                # Build timeline entry
+                subject = headers.get("subject", "(No Subject)")
+                snippet = msg_data.get("snippet", "")
+
+                details = {
+                    "message_id": msg_data.get("id"),
+                    "thread_id": msg_data.get("threadId"),
+                    "subject": subject,
+                    "from": from_emails[0] if from_emails else None,
+                    "to": to_emails,
+                    "cc": cc_emails if cc_emails else None,
+                    "bcc": bcc_emails if bcc_emails else None,
+                    "snippet": snippet,
+                    "labels": msg_data.get("labelIds", []),
+                }
+
+                # Build user from sender
+                user = None
+                if from_emails:
+                    user = TimelineUser(email=from_emails[0])
+
+                entry = TimelineEntry(
+                    type="email",
+                    timestamp=timestamp,
+                    summary=subject,
+                    details=details,
+                    user=user,
+                )
+                entries.append(entry)
+
+            except Exception as msg_error:
+                timeline_logger.warning(
+                    action="fetch_email_message",
+                    status="skipped",
+                    message="Failed to process email message; skipping",
+                    message_id=msg_ref.get("id", "unknown"),
+                    error_type=type(msg_error).__name__,
+                    error_message=str(msg_error),
+                )
+                continue
+
+        timeline_logger.info(
+            action="fetch_emails",
+            status="success",
+            message=f"Fetched {len(entries)} emails from Gmail",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            email_count=len(entries),
+        )
+
+    except Exception as e:
+        timeline_logger.warning(
+            action="fetch_emails",
+            status="failed",
+            message="Failed to fetch emails from Gmail; continuing without email entries",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        # Return empty list on failure - graceful degradation
+        return []
+
+    return entries
 
 
 @router.get(
@@ -417,7 +722,7 @@ def _fetch_emails_placeholder(
     response_model=TimelineResponse,
     summary="Get Unified Timeline",
     description="Retrieves a unified timeline for a CRM entity, aggregating "
-                "calendar events, audit logs, and emails (placeholder) into a "
+                "calendar events, audit logs, and Gmail emails into a "
                 "single chronological view sorted by timestamp descending."
 )
 def get_timeline(
@@ -446,7 +751,7 @@ def get_timeline(
     **Timeline Entry Types:**
     - **meeting**: Calendar events with meet links and attendees
     - **audit**: Entity changes (create, update, status_change)
-    - **email**: Email communications (placeholder for future)
+    - **email**: Gmail email communications with subject, from/to/cc/bcc, snippet, message_id, thread_id
     """
     timeline_logger.info(
         action="get_timeline",
@@ -524,9 +829,9 @@ def get_timeline(
 
         all_entries.extend(audit_entries)
 
-        # 3. Fetch emails (placeholder)
+        # 3. Fetch emails from Gmail
         try:
-            email_entries = _fetch_emails_placeholder(entity_type, entity_id)
+            email_entries = _fetch_emails_from_gmail(db, entity_type, entity_id)
         except Exception as source_exc:
             timeline_logger.warning(
                 action="get_timeline_email",
@@ -541,10 +846,13 @@ def get_timeline(
 
         all_entries.extend(email_entries)
 
-        # Sort all entries by timestamp descending (defensive: handle any unexpected None)
+        # Sort all entries by timestamp descending (defensive: handle any unexpected None or naive timestamps)
         def _sort_key(entry: TimelineEntry) -> datetime:
             ts = getattr(entry, "timestamp", None)
             if isinstance(ts, datetime):
+                # Ensure timezone-aware for consistent sorting
+                if ts.tzinfo is None:
+                    return ts.replace(tzinfo=timezone.utc)
                 return ts
             return datetime.min.replace(tzinfo=timezone.utc)
 

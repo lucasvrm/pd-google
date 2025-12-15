@@ -116,7 +116,7 @@ This document outlines the comprehensive execution plan for integrating the `pd-
 ### Phase 3: Unified Timeline (HIGH PRIORITY ✅)
 **Objective:** Provide sales users with a single, chronological view of all customer interactions.
 
-**Status:** ✅ **COMPLETE**
+**Status:** ✅ **COMPLETE** (Gmail Integration Added)
 
 *   **Completed Tasks:**
     1.  ✅ **Timeline API Router:**
@@ -125,7 +125,7 @@ This document outlines the comprehensive execution plan for integrating the `pd-
         *   Supports pagination via `limit` and `offset` parameters
         *   Returns normalized timeline entries with:
             - Timestamp
-            - Event type (meeting, audit, email placeholder)
+            - Event type (meeting, audit, email)
             - Summary/description
             - User who performed action
             - Details with full context
@@ -138,23 +138,31 @@ This document outlines the comprehensive execution plan for integrating the `pd-
     3.  ✅ **Data Aggregation:**
         *   Fetches CalendarEvents linked to entity (by attendee email or description metadata)
         *   Fetches AuditLogs for the entity
-        *   Email placeholder for future Gmail integration
+        *   ✅ **Gmail Integration:** Fetches real emails from Gmail for leads and contacts
         *   Merges all lists and sorts by timestamp descending
     
-    4.  ✅ **Router Registration:**
+    4.  ✅ **Gmail Email Integration:**
+        *   `_get_lead_contact_emails()` - Extracts contact emails from LeadContacts
+        *   `_get_lead_company_domain()` - Extracts company domain for broader email matching
+        *   `_build_gmail_search_query()` - Builds Gmail search query (from/to matching)
+        *   `_fetch_emails_from_gmail()` - Fetches and normalizes emails to TimelineEntry
+        *   Email entry includes: type="email", timestamp, subject, from/to/cc/bcc, snippet, message_id, thread_id
+        *   Graceful degradation: if Gmail fails, timeline returns calendar and audit entries only
+    
+    5.  ✅ **Router Registration:**
         *   Timeline router registered in `main.py`
 
 *   **Pending Enhancements (Future):**
     *   🔵 Performance optimization with database indexes
     *   🔵 Caching layer for frequently accessed timelines
     *   🔵 Date range filtering via query parameters
-    *   🔵 Gmail integration for email timeline entries
 
-*   **Dependencies:** Phase 2 (Audit Logs) completed, existing Calendar data
+*   **Dependencies:** Phase 2 (Audit Logs) completed, existing Calendar data, Gmail API configured
 *   **Completion Criteria:** 
     - ✅ Single API call returns all interactions for an entity
     - ✅ Timeline properly ordered by timestamp
-    - ✅ All event types properly represented
+    - ✅ All event types properly represented (including real Gmail emails)
+    - ✅ Graceful degradation when Gmail unavailable
 *   **Documentation:** `docs/backend/api_reference.md`
 
 ---

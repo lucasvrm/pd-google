@@ -6,13 +6,13 @@ This document provides a reference for all REST API endpoints available in the P
 
 ## Timeline API
 
-The Unified Timeline API provides a single endpoint for fetching all activities related to a CRM entity, aggregating data from calendar events, audit logs, and emails.
+The Unified Timeline API provides a single endpoint for fetching all activities related to a CRM entity, aggregating data from calendar events, audit logs, and Gmail emails.
 
 ### GET /api/timeline/{entity_type}/{entity_id}
 
 **Summary:** Get Unified Timeline
 
-Retrieves a unified timeline for a CRM entity, aggregating calendar events, audit logs, and emails into a single chronological view sorted by timestamp descending.
+Retrieves a unified timeline for a CRM entity, aggregating calendar events, audit logs, and Gmail emails into a single chronological view sorted by timestamp descending.
 
 **Path Parameters:**
 
@@ -59,7 +59,20 @@ Retrieves a unified timeline for a CRM entity, aggregating calendar events, audi
 |------|-------------|----------------|
 | `meeting` | Calendar events | `google_event_id`, `start_time`, `end_time`, `status`, `meet_link`, `html_link`, `attendees` |
 | `audit` | Entity changes | `action`, `changes` (with old/new values) |
-| `email` | Email communications | `subject`, `from`, `to` (placeholder for future) |
+| `email` | Gmail emails | `message_id`, `thread_id`, `subject`, `from`, `to`, `cc`, `bcc`, `snippet`, `labels` |
+
+**Email Matching Logic:**
+
+For **leads**, emails are matched using:
+1. Contact emails linked to the lead via `lead_contacts` table (to/from matching)
+2. Company domain matching when applicable (e.g., `*@clientcompany.com`)
+
+For **contacts**, emails are matched using:
+1. The contact's own email address (to/from matching)
+
+**Graceful Degradation:**
+
+If Gmail is unavailable or misconfigured, the timeline will still return calendar events and audit logs without causing an error. Email entries will simply be empty.
 
 **Example Request:**
 
@@ -73,6 +86,27 @@ curl -X GET "http://localhost:8000/api/timeline/lead/123e4567-e89b-12d3-a456-426
 ```json
 {
   "items": [
+    {
+      "type": "email",
+      "timestamp": "2024-01-16T09:15:00Z",
+      "summary": "Re: Product Inquiry",
+      "details": {
+        "message_id": "18b2f3a8d4c5e1f2",
+        "thread_id": "18b2f3a8d4c5e1f2",
+        "subject": "Re: Product Inquiry",
+        "from": "client@clientcompany.com",
+        "to": ["sales@ourcompany.com"],
+        "cc": null,
+        "bcc": null,
+        "snippet": "Thank you for your response. We would like to schedule a demo...",
+        "labels": ["INBOX", "IMPORTANT"]
+      },
+      "user": {
+        "id": null,
+        "name": null,
+        "email": "client@clientcompany.com"
+      }
+    },
     {
       "type": "meeting",
       "timestamp": "2024-01-15T14:00:00Z",
@@ -135,3 +169,4 @@ curl -X GET "http://localhost:8000/api/timeline/lead/123e4567-e89b-12d3-a456-426
 - [Audit System](./audit_system.md) - Audit logging implementation details
 - [Calendar API](../../CALENDAR_API.md) - Google Calendar integration
 - [Drive Adapter](./api_drive_adapter.md) - Drive items endpoint documentation
+- [Gmail API](../../GMAIL_API.md) - Gmail integration documentation
