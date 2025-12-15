@@ -282,6 +282,137 @@ def test_sales_view_order_by_status():
         db.close()
 
 
+def test_sales_view_order_by_status_deterministic_tiebreaker():
+    """Test that order_by=status uses created_at as a tie-breaker for deterministic ordering.
+    
+    When multiple leads share the same status, they should be ordered by created_at
+    (newer leads first in ascending status order, older leads first in descending status order).
+    """
+    db = TestingSessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Create two leads with the SAME status but different created_at and priority_score
+        # This tests that:
+        # 1. Status sort_order is the PRIMARY sort criterion (not priority_score)
+        # 2. created_at is used as a tie-breaker for deterministic ordering
+        lead_same_status_older = models.Lead(
+            id="lead-same-status-older",
+            title="Same Status Older",
+            lead_status_id="contacted",  # sort_order=2
+            priority_score=90,  # Higher priority, but should be ordered by created_at, not priority
+            created_at=now - timedelta(days=5),  # Older
+        )
+        lead_same_status_newer = models.Lead(
+            id="lead-same-status-newer",
+            title="Same Status Newer",
+            lead_status_id="contacted",  # sort_order=2 (same status)
+            priority_score=10,  # Lower priority, but should appear first due to newer created_at
+            created_at=now - timedelta(days=1),  # Newer
+        )
+        
+        db.add_all([lead_same_status_older, lead_same_status_newer])
+        db.commit()
+        
+        # Ascending order by status: within same status, newer leads should come first (desc created_at)
+        result = leads.sales_view(page=1, page_size=20, order_by="status", db=db)
+        body = result.model_dump()
+        
+        # Filter to only the leads with "contacted" status
+        contacted_leads = [item for item in body["data"] if item["lead_status_id"] == "contacted"]
+        contacted_ids = [item["id"] for item in contacted_leads]
+        
+        # Within same status, newer (more recent created_at) should come first
+        # lead-same-status-newer (created 1 day ago) should come before lead-same-status-older (created 5 days ago)
+        assert "lead-same-status-newer" in contacted_ids
+        assert "lead-same-status-older" in contacted_ids
+        newer_idx = contacted_ids.index("lead-same-status-newer")
+        older_idx = contacted_ids.index("lead-same-status-older")
+        assert newer_idx < older_idx, (
+            f"Newer lead should come before older lead within same status. "
+            f"Got newer at {newer_idx}, older at {older_idx}"
+        )
+        
+        # Descending order by status: within same status, older leads should come first (asc created_at)
+        result_desc = leads.sales_view(page=1, page_size=20, order_by="-status", db=db)
+        body_desc = result_desc.model_dump()
+        
+        contacted_leads_desc = [item for item in body_desc["data"] if item["lead_status_id"] == "contacted"]
+        contacted_ids_desc = [item["id"] for item in contacted_leads_desc]
+        
+        # In descending status order, within same status, older (earlier created_at) should come first
+        newer_idx_desc = contacted_ids_desc.index("lead-same-status-newer")
+        older_idx_desc = contacted_ids_desc.index("lead-same-status-older")
+        assert older_idx_desc < newer_idx_desc, (
+            f"Older lead should come before newer lead in descending order. "
+            f"Got older at {older_idx_desc}, newer at {newer_idx_desc}"
+        )
+        
+        # Clean up
+        db.query(models.Lead).filter(models.Lead.id.in_(["lead-same-status-older", "lead-same-status-newer"])).delete(synchronize_session=False)
+        db.commit()
+        
+    finally:
+        db.close()
+
+
+def test_sales_view_order_by_status_replaces_priority():
+    """Test that order_by=status replaces priority_score as the primary sorting criterion.
+    
+    This test verifies that when order_by=status is specified, leads are sorted by
+    LeadStatus.sort_order, NOT by priority_score. A lead with higher priority but
+    lower-urgency status should come AFTER a lead with lower priority but higher-urgency status.
+    """
+    db = TestingSessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Create leads with:
+        # - lead-high-priority-low-urgency: priority_score=95, status=lost (sort_order=4, low urgency)
+        # - lead-low-priority-high-urgency: priority_score=5, status=new (sort_order=1, high urgency)
+        lead_high_priority = models.Lead(
+            id="lead-high-priority-low-urgency",
+            title="High Priority Low Urgency",
+            lead_status_id="lost",  # sort_order=4 (low urgency)
+            priority_score=95,  # High priority
+            created_at=now - timedelta(days=2),
+        )
+        lead_low_priority = models.Lead(
+            id="lead-low-priority-high-urgency",
+            title="Low Priority High Urgency",
+            lead_status_id="new",  # sort_order=1 (high urgency)
+            priority_score=5,  # Low priority
+            created_at=now - timedelta(days=1),
+        )
+        
+        db.add_all([lead_high_priority, lead_low_priority])
+        db.commit()
+        
+        # When ordering by status (ascending), the low-priority lead with high-urgency status
+        # should come BEFORE the high-priority lead with low-urgency status
+        result = leads.sales_view(page=1, page_size=20, order_by="status", db=db)
+        body = result.model_dump()
+        
+        ids = [item["id"] for item in body["data"]]
+        
+        # Find indices
+        high_priority_idx = ids.index("lead-high-priority-low-urgency")
+        low_priority_idx = ids.index("lead-low-priority-high-urgency")
+        
+        # Low-priority lead (with high-urgency status) should come before high-priority lead
+        assert low_priority_idx < high_priority_idx, (
+            f"Status ordering should override priority. Expected low-priority-high-urgency lead "
+            f"before high-priority-low-urgency lead. Got indices: low={low_priority_idx}, high={high_priority_idx}"
+        )
+        
+        # Clean up
+        db.query(models.Lead).filter(models.Lead.id.in_(["lead-high-priority-low-urgency", "lead-low-priority-high-urgency"])).delete(synchronize_session=False)
+        db.commit()
+        
+    finally:
+        db.close()
+
+
 def test_sales_view_order_by_owner():
     """Test ordering by owner name (User.name)."""
     db = TestingSessionLocal()
