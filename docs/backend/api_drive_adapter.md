@@ -49,7 +49,8 @@ This endpoint requires authentication via one of:
       "size": "number | null"
     }
   ],
-  "total": "number"
+  "total": "number",
+  "root_url": "string | null"
 }
 ```
 
@@ -64,6 +65,7 @@ This endpoint requires authentication via one of:
   - `type`: Either `"file"` or `"folder"`
   - `size`: Size in bytes (null for folders or if not available)
 - `total`: Total number of items before pagination
+- `root_url`: Direct URL to the entity's root folder in Google Drive (null if not available). This allows the frontend to open the root folder directly without inferring from the hierarchy.
 
 ## Examples
 
@@ -113,7 +115,8 @@ curl -X GET "http://localhost:8000/api/drive/items?entityType=lead&entityId=123e
       "size": null
     }
   ],
-  "total": 15
+  "total": 15,
+  "root_url": "https://drive.google.com/drive/folders/0BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 }
 ```
 
@@ -129,7 +132,7 @@ The adapter internally calls the same logic used by `/drive/{entity_type}/{entit
 4. **Soft Delete Filtering**: Excludes items marked as soft-deleted in the database
 5. **Pagination**: Performs in-memory pagination based on `page` and `limit`
 6. **Transformation**: Converts items to frontend-expected format
-7. **Response**: Returns `{ items, total }` structure
+7. **Response**: Returns `{ items, total, root_url }` structure
 
 ### Differences from `/drive/{entity_type}/{entity_id}`
 
@@ -137,9 +140,10 @@ The adapter internally calls the same logic used by `/drive/{entity_type}/{entit
 |--------|-----------------------------------|-------------------|
 | Route style | Path parameters | Query parameters |
 | Response root | `files` | `items` |
-| Response structure | `DriveResponse` with pagination metadata | Simple `{ items, total }` |
+| Response structure | `DriveResponse` with pagination metadata | Simple `{ items, total, root_url }` |
 | Item fields | `createdTime`, `webViewLink` | `createdAt`, `url` |
 | Permission in response | Yes | No |
+| Root folder URL | Not included | Included as `root_url` |
 
 ### Pagination
 

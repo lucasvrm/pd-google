@@ -47,6 +47,7 @@ class DriveItemsResponse(BaseModel):
     """Frontend-expected response format"""
     items: List[DriveItemResponse]
     total: int
+    root_url: Optional[str] = None
 
 
 @router.get("/items", response_model=DriveItemsResponse)
@@ -156,7 +157,8 @@ def get_drive_items(
 
         return DriveItemsResponse(
             items=paginated_items,
-            total=total
+            total=total,
+            root_url=entity_folder.folder_url
         )
 
     except HTTPException:
