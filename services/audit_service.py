@@ -72,6 +72,7 @@ LEAD_AUDIT_FIELDS: Set[str] = {
     "qualified_master_deal_id",
     "address_city",
     "address_state",
+    "deleted_at",  # Soft delete tracking for qualified leads
 }
 
 DEAL_AUDIT_FIELDS: Set[str] = {
@@ -186,7 +187,10 @@ def _log_lead_changes(mapper, connection, target):
     
     # Determine action based on changes
     action = "update"
-    if "lead_status_id" in changes:
+    if "deleted_at" in changes and changes["deleted_at"].get("new") is not None:
+        # Lead was soft deleted (e.g., qualified)
+        action = "soft_delete"
+    elif "lead_status_id" in changes:
         action = "status_change"
     
     # Insert directly via connection to avoid flush cycle issues.

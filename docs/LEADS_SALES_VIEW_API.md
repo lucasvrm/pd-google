@@ -5,6 +5,7 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 ## Método e rota
 - **GET** `/api/leads/sales-view`
 - Retorna lista paginada de leads com campos normalizados (tags, owner, contatos, prioridade e próxima ação).
+- **Importante:** Leads com `deleted_at` preenchido (soft deleted / qualificados) são automaticamente excluídos dos resultados.
 
 ## Parâmetros de query
 - `page` (int, padrão `1`, >= 1): página solicitada.
@@ -144,3 +145,4 @@ Todos os erros seguem a convenção global de `/api`:
 - Os campos complexos já chegam normalizados pelo backend: `tags` como objetos `{id,name,color}`, `owner` como objeto simples, `primary_contact` com `id`/`name`/`role`, `priority_description` derivada do bucket e `next_action` com `code`/`label`/`reason`.
 - Métricas e logs estruturados do endpoint estão descritos em [`docs/SALES_VIEW_OBSERVABILITY.md`](./SALES_VIEW_OBSERVABILITY.md).
 - **Documentação completa de Next Actions:** Para detalhamento de regras, precedência, campos influenciadores e checklist de QA, consulte [`docs/backend/next_actions.md`](./backend/next_actions.md).
+- **Soft Delete:** Leads com o campo `deleted_at` preenchido são automaticamente excluídos da resposta. Isso é usado para leads qualificados que não devem mais aparecer na visão comercial. Consulte [`SOFT_DELETE_IMPLEMENTATION.md`](../SOFT_DELETE_IMPLEMENTATION.md) para mais detalhes.
