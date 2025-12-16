@@ -159,6 +159,16 @@ def sales_view(
     ),
     order_by: str = Query("priority", description="Campo de ordenação"),
     filters: Optional[str] = Query(None, description="Additional filters (JSON)"),
+    include_qualified: Optional[bool] = Query(
+        None,
+        alias="includeQualified",
+        description="Include qualified/soft-deleted leads (default: false)",
+    ),
+    include_qualified_override: Optional[bool] = Query(
+        None,
+        alias="include_qualified",
+        description="Alias for includeQualified (snake_case)",
+    ),
     current_user: Optional[UserContext] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
@@ -190,9 +200,20 @@ def sales_view(
     search = _extract_value(search)
     q = _extract_value(q)
     tags = _extract_value(tags)
+    include_qualified = _extract_value(include_qualified)
+    include_qualified_override = _extract_value(include_qualified_override)
 
     # Normalize search term: use search or fall back to q (legacy alias)
     search_term = search or q
+
+    # Normalize includeQualified - accept camelCase or snake_case, default to False
+    # Prefer the first non-None value; if both are None, default to False
+    if include_qualified is not None:
+        effective_include_qualified = bool(include_qualified)
+    elif include_qualified_override is not None:
+        effective_include_qualified = bool(include_qualified_override)
+    else:
+        effective_include_qualified = False
 
     # Normalize tags filter (CSV of tag IDs)
     tags_filter = _normalize_filter_list(tags)
@@ -287,8 +308,13 @@ def sales_view(
                     joinedload(models.Lead.tags),
                 )
             )
-            # Exclude soft deleted leads (deleted_at is set when lead is qualified)
-            base_query = base_query.filter(models.Lead.deleted_at.is_(None))
+            # Exclude soft deleted and qualified leads by default
+            # When includeQualified=true, show all leads including qualified/deleted ones
+            if not effective_include_qualified:
+                base_query = base_query.filter(
+                    models.Lead.deleted_at.is_(None),
+                    models.Lead.qualified_at.is_(None),
+                )
 
             # Apply owner filter - support list
             if owner_filter:
