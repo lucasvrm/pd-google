@@ -314,6 +314,10 @@ def sales_view(
                 base_query = base_query.filter(
                     models.Lead.deleted_at.is_(None),
                     models.Lead.qualified_at.is_(None),
+                    or_(
+                        models.Lead.lead_status_id.is_(None),
+                        models.LeadStatus.code != "qualified",
+                    ),
                 )
 
             # Apply owner filter - support list

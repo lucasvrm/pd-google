@@ -97,6 +97,7 @@ Leads that are "qualified" (status changed to qualified) are soft deleted by set
 
 #### 2. Query Filter (`routers/leads.py`)
 - Modified `/api/leads/sales-view` to filter out leads where `deleted_at IS NOT NULL`
+- Excludes leads whose `lead_statuses.code = 'qualified'` even when `qualified_at` is `NULL` (include via `includeQualified=true`)
 - This is applied automatically to all queries, ensuring soft deleted leads are never returned
 
 #### 3. Audit Service (`services/audit_service.py`)
