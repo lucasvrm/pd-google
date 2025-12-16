@@ -92,6 +92,11 @@ BEGIN
         ALTER TABLE leads ADD COLUMN qualified_at TIMESTAMPTZ;
     END IF;
 
+    -- Soft delete column for qualified leads
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='deleted_at') THEN
+        ALTER TABLE leads ADD COLUMN deleted_at TIMESTAMPTZ;
+    END IF;
+
     -- Legacy columns to drop if present
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='owner_id') THEN
         ALTER TABLE leads DROP COLUMN owner_id;
@@ -158,4 +163,5 @@ END $$;
 -- 7. Create indexes for new columns (idempotent) ------------------------------
 CREATE INDEX IF NOT EXISTS idx_leads_disqualified_at ON leads(disqualified_at);
 CREATE INDEX IF NOT EXISTS idx_leads_qualified_at ON leads(qualified_at);
+CREATE INDEX IF NOT EXISTS idx_leads_deleted_at ON leads(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_lead_activity_stats_next_scheduled_event_at ON lead_activity_stats(next_scheduled_event_at);

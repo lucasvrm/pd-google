@@ -84,10 +84,16 @@ BEGIN
     WHERE id = p_lead_id::TEXT;
 
     -- Update the lead: set qualified_at and deleted_at simultaneously
+    -- Note: qualified_company_id is only updated if provided in p_new_company_data
+    -- If explicitly set to NULL in JSON, it will clear the existing value
     UPDATE leads
     SET qualified_at = v_now,
         deleted_at = v_now,
-        qualified_company_id = COALESCE(v_qualified_company_id, qualified_company_id),
+        qualified_company_id = CASE
+            WHEN p_new_company_data IS NOT NULL AND p_new_company_data ? 'qualified_company_id'
+            THEN v_qualified_company_id  -- Can be NULL if explicitly set to null in JSON
+            ELSE qualified_company_id    -- Keep existing value if not provided
+        END,
         updated_at = v_now
     WHERE id = p_lead_id::TEXT;
 
