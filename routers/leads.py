@@ -207,7 +207,13 @@ def sales_view(
     search_term = search or q
 
     # Normalize includeQualified - accept camelCase or snake_case, default to False
-    effective_include_qualified = include_qualified or include_qualified_override or False
+    # Prefer the first non-None value; if both are None, default to False
+    if include_qualified is not None:
+        effective_include_qualified = bool(include_qualified)
+    elif include_qualified_override is not None:
+        effective_include_qualified = bool(include_qualified_override)
+    else:
+        effective_include_qualified = False
 
     # Normalize tags filter (CSV of tag IDs)
     tags_filter = _normalize_filter_list(tags)

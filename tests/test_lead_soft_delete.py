@@ -168,10 +168,10 @@ class TestLeadSoftDeleteInSalesView:
 
 
 class TestLeadQualifiedFilterInSalesView:
-    """Test that qualified leads (with qualified_at set) are excluded from sales-view by default."""
+    """Test that qualified leads (with qualified_at set) are excluded from sales view by default."""
 
     def test_qualified_lead_excluded_by_default(self, client):
-        """Leads with qualified_at set (but deleted_at NULL) should be excluded from sales-view by default."""
+        """Leads with qualified_at set (but deleted_at NULL) should be excluded from sales view by default."""
         db = TestingSessionLocal()
         now = datetime.now(timezone.utc)
         try:
