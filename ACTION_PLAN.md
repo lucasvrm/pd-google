@@ -586,6 +586,11 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 
 ## Next Immediate Actions
 
+### Sales-View Qualified Filter Hotfix - COMPLETE ✅
+1. ✅ Excluir leads com `lead_statuses.code='qualified'` quando `includeQualified=false`, mantendo compatibilidade com `qualified_at IS NULL`.
+2. ✅ Adicionar teste cobrindo lead legado (status qualified + `qualified_at` nulo) e verificação com/sem `includeQualified`.
+3. ✅ Atualizar documentação rápida de filtro em `SOFT_DELETE_IMPLEMENTATION.md`.
+
 ### For Phase 2 (Audit & Security) - MOSTLY COMPLETE 🟡
 1.  ✅ Create `AuditLog` model in `models.py`
 2.  ✅ Implement SQLAlchemy event listeners for Lead/Deal models

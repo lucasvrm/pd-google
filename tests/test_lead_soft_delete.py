@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, User, AuditLog
+from models import Lead, LeadActivityStats, LeadStatus, User, AuditLog
 from routers import leads
 from services.audit_service import register_audit_listeners, set_audit_actor, clear_audit_actor
 
@@ -304,6 +304,50 @@ class TestLeadQualifiedFilterInSalesView:
         ids = [item["id"] for item in body["data"]]
         assert "lead-active-deleted-test" in ids
         assert "lead-deleted-test" in ids
+
+    def test_qualified_status_without_timestamp_is_excluded(self, client):
+        """Leads with status code 'qualified' should be excluded even if qualified_at is NULL."""
+        db = TestingSessionLocal()
+        try:
+            qualified_status = LeadStatus(
+                id="status-qualified",
+                code="qualified",
+                label="Qualified",
+                sort_order=1,
+            )
+            active_lead = Lead(
+                id="lead-active-status",
+                title="Active Lead",
+                priority_score=50,
+            )
+            legacy_qualified_lead = Lead(
+                id="lead-legacy-qualified",
+                title="Legacy Qualified Lead",
+                priority_score=70,
+                lead_status_id=qualified_status.id,
+                qualified_at=None,
+                deleted_at=None,
+            )
+            db.add_all([qualified_status, active_lead, legacy_qualified_lead])
+            db.commit()
+        finally:
+            db.close()
+
+        response = client.get("/api/leads/sales-view")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        assert "lead-active-status" in ids
+        assert "lead-legacy-qualified" not in ids
+        assert body["pagination"]["total"] == 1
+
+        response = client.get("/api/leads/sales-view?includeQualified=true")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        assert "lead-active-status" in ids
+        assert "lead-legacy-qualified" in ids
+        assert body["pagination"]["total"] == 2
 
     def test_pagination_total_reflects_qualified_filter(self, client):
         """Pagination total should correctly reflect the qualified filter."""
