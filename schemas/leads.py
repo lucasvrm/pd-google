@@ -56,3 +56,29 @@ class Pagination(BaseModel):
 class LeadSalesViewResponse(BaseModel):
     data: List[LeadSalesViewItem]
     pagination: Pagination
+
+
+# ===== Lead Qualification Schemas =====
+
+class QualifyLeadRequest(BaseModel):
+    """Request body for qualifying a lead."""
+    deal_id: str  # ID of the Deal to link the qualified lead to
+
+
+class MigratedFields(BaseModel):
+    """Fields migrated from Lead to Deal during qualification."""
+    legal_name: Optional[str] = None
+    trade_name: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = []  # List of tag IDs
+
+
+class QualifyLeadResponse(BaseModel):
+    """Response body for lead qualification."""
+    status: str  # "qualified"
+    lead_id: str
+    deal_id: str
+    qualified_at: datetime
+    deleted_at: datetime
+    migrated_fields: MigratedFields

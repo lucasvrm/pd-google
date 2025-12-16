@@ -86,7 +86,14 @@ Leads that are "qualified" (status changed to qualified) are soft deleted by set
 
 #### 1. Model Update (`models.py`)
 - Added `deleted_at` field (DateTime, nullable, indexed) to the `Lead` model
+- Added `qualified_at` field (DateTime, nullable, indexed) to track when lead was qualified
+- Added `description` field (Text, nullable) for lead notes
 - Leads with `deleted_at` set are considered "soft deleted"
+- Updated `Deal` model to include fields migrated from Lead during qualification:
+  - `legal_name` - Razão Social from Lead
+  - `trade_name` - Nome Fantasia from Lead
+  - `owner_user_id` - Owner from Lead
+  - `description` - Description from Lead
 
 #### 2. Query Filter (`routers/leads.py`)
 - Modified `/api/leads/sales-view` to filter out leads where `deleted_at IS NOT NULL`
@@ -94,12 +101,20 @@ Leads that are "qualified" (status changed to qualified) are soft deleted by set
 
 #### 3. Audit Service (`services/audit_service.py`)
 - Added `deleted_at` to `LEAD_AUDIT_FIELDS` for tracking changes
-- Updated `_log_lead_changes` to detect soft delete operations and log them with `action="soft_delete"`
+- Added `qualified_at` to `LEAD_AUDIT_FIELDS` for tracking qualification timestamp
+- Added `description` to `LEAD_AUDIT_FIELDS` for tracking description changes
+- Updated `_log_lead_changes` to detect qualification operations and log them with `action="qualify_and_soft_delete"`
+- Added migrated fields to `DEAL_AUDIT_FIELDS` (legal_name, trade_name, owner_user_id, description)
 
-#### 4. Migration Script (`migrations/add_lead_soft_delete.py`)
-- Adds `deleted_at` column to `leads` table if it doesn't exist
-- Creates index `ix_leads_deleted_at` for efficient filtering
-- Safe to run multiple times (idempotent)
+#### 4. Migration Scripts
+- `migrations/add_lead_soft_delete.py` - Adds `deleted_at` column to `leads` table
+- `migrations/add_qualification_fields.py` - Adds qualification-related columns:
+  - `leads.qualified_at` - Qualification timestamp
+  - `leads.description` - Lead description
+  - `master_deals.legal_name` - Legal name from Lead
+  - `master_deals.trade_name` - Trade name from Lead
+  - `master_deals.owner_user_id` - Owner from Lead
+  - `master_deals.description` - Description from Lead
 
 ### Testing
 Created `tests/test_lead_soft_delete.py` with 6 tests:
@@ -110,22 +125,68 @@ Created `tests/test_lead_soft_delete.py` with 6 tests:
 - Soft delete creates audit log with `action="soft_delete"`
 - Regular updates don't trigger soft delete action
 
+Created `tests/test_lead_qualification.py` with comprehensive tests for:
+- Successful lead qualification
+- Qualified leads excluded from sales-view
+- Field migration from Lead to Deal
+- Preserving existing Deal fields
+- Validation for non-existent leads/deals
+- Preventing re-qualification of already qualified leads
+- Preventing qualification of disqualified leads
+- Audit log creation with `action="qualify_and_soft_delete"`
+- Tag ID tracking in response
+
 ### Usage
 
-#### Qualifying a Lead (Soft Delete)
-To qualify a lead (soft delete it), set the `deleted_at` field:
+#### Qualifying a Lead via API (Recommended)
+Use the new qualification endpoint:
+
+```http
+POST /api/leads/{lead_id}/qualify
+Content-Type: application/json
+
+{
+  "deal_id": "uuid-of-target-deal"
+}
+```
+
+Response:
+```json
+{
+  "status": "qualified",
+  "lead_id": "uuid-of-lead",
+  "deal_id": "uuid-of-deal",
+  "qualified_at": "2024-01-15T10:30:00Z",
+  "deleted_at": "2024-01-15T10:30:00Z",
+  "migrated_fields": {
+    "legal_name": "Company Legal Name",
+    "trade_name": "Company Trade Name",
+    "owner_user_id": "uuid-of-owner",
+    "description": "Lead description",
+    "tags": ["tag-id-1", "tag-id-2"]
+  }
+}
+```
+
+This will:
+1. Set `qualified_at` and `deleted_at` to the current timestamp
+2. Link the lead to the specified deal via `qualified_master_deal_id`
+3. Migrate critical fields (legal_name, trade_name, owner_user_id, description) to the deal
+4. Create an audit log entry with `action="qualify_and_soft_delete"`
+5. Exclude the lead from `/api/leads/sales-view` queries
+
+#### Manual Qualification (Legacy)
+To qualify a lead manually (soft delete it), set both fields:
 
 ```python
 from datetime import datetime, timezone
 
-lead.deleted_at = datetime.now(timezone.utc)
+now = datetime.now(timezone.utc)
+lead.qualified_at = now  # Marks qualification
+lead.deleted_at = now    # Removes from views
+lead.qualified_master_deal_id = deal_id  # Links to deal
 db.commit()
 ```
-
-This will:
-1. Mark the lead as soft deleted
-2. Create an audit log entry with `action="soft_delete"`
-3. Exclude the lead from `/api/leads/sales-view` queries
 
 ---
 

@@ -204,9 +204,13 @@ class Lead(Base):
     # Disqualification tracking: when a lead is marked as disqualified/lost
     disqualified_at = Column(DateTime(timezone=True), nullable=True, index=True)
     disqualification_reason = Column(Text, nullable=True)
+    # Qualification tracking: when a lead is successfully qualified to a deal
+    qualified_at = Column(DateTime(timezone=True), nullable=True, index=True)
     # Soft delete: leads with deleted_at set are treated as "soft deleted"
     # Used when a lead is qualified and should no longer appear in normal queries
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # Description field for notes about the lead
+    description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -290,9 +294,16 @@ class Deal(Base):
     title = Column("client_name", String)
 
     company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    
+    # Fields migrated from Lead during qualification
+    legal_name = Column(String, nullable=True)  # Razão Social from Lead
+    trade_name = Column(String, nullable=True)  # Nome Fantasia from Lead
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=True)  # Owner from Lead
+    description = Column(Text, nullable=True)  # Description from Lead
 
     # Relationship
     company = relationship("Company")
+    owner = relationship("User", foreign_keys=[owner_user_id])
 
 
 class DriveChangeLog(Base):

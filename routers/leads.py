@@ -855,3 +855,135 @@ def sales_view(
             avg_latency_ms=round(avg_latency * 1000, 2),
             last_request_ms=round(duration * 1000, 2),
         )
+
+
+# ===== Lead Qualification Endpoint =====
+
+from schemas.leads import (
+    QualifyLeadRequest,
+    QualifyLeadResponse,
+    MigratedFields,
+)
+from services.audit_service import set_audit_actor, clear_audit_actor
+
+qualify_lead_logger = StructuredLogger(
+    service="lead_qualification", logger_name="pipedesk_drive.lead_qualification"
+)
+
+
+@router.post("/{lead_id}/qualify", response_model=QualifyLeadResponse)
+def qualify_lead(
+    lead_id: str,
+    request: QualifyLeadRequest,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Qualify a lead by linking it to a Deal and soft deleting it.
+    
+    This endpoint:
+    1. Sets qualified_at and deleted_at timestamps on the lead
+    2. Links the lead to the specified deal via qualified_master_deal_id
+    3. Migrates critical fields (legal_name, trade_name, owner_user_id, description) to the deal
+    4. Creates an audit log entry with action="qualify_and_soft_delete"
+    
+    After qualification, the lead will no longer appear in sales view, kanban, or grid views.
+    """
+    now = datetime.now(timezone.utc)
+    
+    try:
+        # Set audit actor for tracking
+        actor_id = current_user.id if current_user else None
+        set_audit_actor(actor_id)
+        
+        # Fetch the lead
+        lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail=f"Lead {lead_id} not found")
+        
+        # Check if lead is already qualified/deleted
+        if lead.deleted_at is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Lead {lead_id} is already qualified or deleted"
+            )
+        
+        # Check if lead is disqualified
+        if lead.disqualified_at is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Lead {lead_id} is disqualified and cannot be qualified"
+            )
+        
+        # Fetch the deal
+        deal = db.query(models.Deal).filter(models.Deal.id == request.deal_id).first()
+        if not deal:
+            raise HTTPException(status_code=404, detail=f"Deal {request.deal_id} not found")
+        
+        # Collect tag IDs before qualification
+        tag_ids = [tag.id for tag in lead.tags] if lead.tags else []
+        
+        # Migrate fields from Lead to Deal
+        # Only update deal fields if they are not already set (preserve existing data)
+        if not deal.legal_name:
+            deal.legal_name = lead.legal_name
+        if not deal.trade_name:
+            deal.trade_name = lead.trade_name
+        if not deal.owner_user_id:
+            deal.owner_user_id = lead.owner_user_id
+        if not deal.description:
+            deal.description = lead.description
+        
+        # Update lead with qualification data
+        lead.qualified_at = now
+        lead.deleted_at = now
+        lead.qualified_master_deal_id = request.deal_id
+        
+        # Commit changes
+        db.commit()
+        
+        # Build response
+        migrated_fields = MigratedFields(
+            legal_name=lead.legal_name,
+            trade_name=lead.trade_name,
+            owner_user_id=lead.owner_user_id,
+            description=lead.description,
+            tags=tag_ids,
+        )
+        
+        qualify_lead_logger.info(
+            action="lead_qualified",
+            message=f"Lead {lead_id} qualified and linked to deal {request.deal_id}",
+            lead_id=lead_id,
+            deal_id=request.deal_id,
+            actor_id=actor_id,
+            migrated_fields=migrated_fields.model_dump(),
+        )
+        
+        return QualifyLeadResponse(
+            status="qualified",
+            lead_id=lead_id,
+            deal_id=request.deal_id,
+            qualified_at=now,
+            deleted_at=now,
+            migrated_fields=migrated_fields,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        qualify_lead_logger.error(
+            action="lead_qualification_error",
+            message=f"Failed to qualify lead {lead_id}",
+            lead_id=lead_id,
+            deal_id=request.deal_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to qualify lead: {str(exc)}"
+        )
+    finally:
+        clear_audit_actor()
