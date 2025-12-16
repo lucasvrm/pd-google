@@ -204,6 +204,9 @@ class Lead(Base):
     # Disqualification tracking: when a lead is marked as disqualified/lost
     disqualified_at = Column(DateTime(timezone=True), nullable=True, index=True)
     disqualification_reason = Column(Text, nullable=True)
+    # Soft delete: leads with deleted_at set are treated as "soft deleted"
+    # Used when a lead is qualified and should no longer appear in normal queries
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

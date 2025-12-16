@@ -287,6 +287,9 @@ def sales_view(
                     joinedload(models.Lead.tags),
                 )
             )
+            # Exclude soft deleted leads (deleted_at is set when lead is qualified)
+            base_query = base_query.filter(models.Lead.deleted_at.is_(None))
+
             # Apply owner filter - support list
             if owner_filter:
                 base_query = base_query.filter(
