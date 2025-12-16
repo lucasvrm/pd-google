@@ -377,6 +377,10 @@ This document describes the database schema for the PipeDesk Google Drive Backen
 | address_state               | String       | NULLABLE                        | State                                          |
 | last_interaction_at         | DateTime(TZ) | NULLABLE, INDEX                 | Last meaningful interaction                    |
 | priority_score              | Integer      | DEFAULT 0, INDEX                | Calculated priority score                      |
+| disqualified_at             | DateTime(TZ) | NULLABLE, INDEX                 | When lead was disqualified/lost                |
+| disqualification_reason     | Text         | NULLABLE                        | Reason for disqualification                    |
+| qualified_at                | DateTime(TZ) | NULLABLE, INDEX                 | When lead was successfully qualified           |
+| deleted_at                  | DateTime(TZ) | NULLABLE, INDEX                 | Soft delete timestamp (set when qualified)     |
 | created_at                  | DateTime(TZ) | SERVER_DEFAULT now()            | Creation timestamp                             |
 | updated_at                  | DateTime(TZ) | SERVER_DEFAULT & ON UPDATE      | Last update timestamp                          |
 
@@ -384,6 +388,7 @@ This document describes the database schema for the PipeDesk Google Drive Backen
 - **Automatic Interaction Tracking**: The `before_update` event listener automatically updates `last_interaction_at` when tracked fields change
 - **Property Mapping**: `title` attribute maps to `legal_name` column for compatibility
 - **Tracked Fields**: Changes to specific fields (status, owner, priority, etc.) trigger interaction timestamp updates
+- **Soft Delete for Qualification**: When a lead is qualified, both `qualified_at` and `deleted_at` are set, hiding the lead from `/api/leads/sales-view`
 
 **Relationships**:
 - `company`: Many-to-one with `Company`
@@ -393,6 +398,9 @@ This document describes the database schema for the PipeDesk Google Drive Backen
 - `qualified_master_deal`: Many-to-one with `Deal`
 - `activity_stats`: One-to-one with `LeadActivityStats`
 - `tags`: Many-to-many with `Tag` through `lead_tags`
+
+**Supabase RPC Functions**:
+- `qualify_lead(p_lead_id UUID, p_new_company_data JSONB, p_user_id UUID)`: Qualifies a lead by setting `qualified_at` and `deleted_at`, and creates an audit log entry with action `'qualify_lead'`.
 
 ---
 

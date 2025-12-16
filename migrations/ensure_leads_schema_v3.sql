@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS leads (
     priority_score INTEGER DEFAULT 0,
     disqualified_at TIMESTAMPTZ,
     disqualification_reason TEXT,
+    qualified_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -83,6 +85,11 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='disqualification_reason') THEN
         ALTER TABLE leads ADD COLUMN disqualification_reason TEXT;
+    END IF;
+
+    -- Qualification tracking column
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='leads' AND column_name='qualified_at') THEN
+        ALTER TABLE leads ADD COLUMN qualified_at TIMESTAMPTZ;
     END IF;
 
     -- Legacy columns to drop if present
@@ -150,4 +157,5 @@ END $$;
 
 -- 7. Create indexes for new columns (idempotent) ------------------------------
 CREATE INDEX IF NOT EXISTS idx_leads_disqualified_at ON leads(disqualified_at);
+CREATE INDEX IF NOT EXISTS idx_leads_qualified_at ON leads(qualified_at);
 CREATE INDEX IF NOT EXISTS idx_lead_activity_stats_next_scheduled_event_at ON lead_activity_stats(next_scheduled_event_at);

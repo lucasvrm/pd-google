@@ -72,6 +72,7 @@ LEAD_AUDIT_FIELDS: Set[str] = {
     "qualified_master_deal_id",
     "address_city",
     "address_state",
+    "qualified_at",  # Qualification tracking
     "deleted_at",  # Soft delete tracking for qualified leads
 }
 

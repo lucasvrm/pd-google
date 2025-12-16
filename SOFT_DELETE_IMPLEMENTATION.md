@@ -112,18 +112,46 @@ Created `tests/test_lead_soft_delete.py` with 6 tests:
 
 ### Usage
 
-#### Qualifying a Lead (Soft Delete)
-To qualify a lead (soft delete it), set the `deleted_at` field:
+#### Qualifying a Lead via Supabase RPC (Recommended)
+The preferred method to qualify a lead is using the `qualify_lead` Supabase RPC function:
+
+```sql
+-- Basic qualification (no company data)
+SELECT qualify_lead(
+    'lead-uuid-here'::UUID,
+    NULL,
+    'user-uuid-here'::UUID
+);
+
+-- Qualification with company association
+SELECT qualify_lead(
+    'lead-uuid-here'::UUID,
+    '{"qualified_company_id": "company-uuid-here"}'::JSONB,
+    'user-uuid-here'::UUID
+);
+```
+
+This will:
+1. Set `qualified_at` to current timestamp
+2. Set `deleted_at` to current timestamp (soft delete)
+3. Optionally link to a company via `qualified_company_id`
+4. Create an audit log entry with `action="qualify_lead"`
+5. Automatically rollback on any failure
+
+#### Qualifying a Lead via Python (Alternative)
+You can also qualify a lead directly in Python:
 
 ```python
 from datetime import datetime, timezone
 
-lead.deleted_at = datetime.now(timezone.utc)
+now = datetime.now(timezone.utc)
+lead.qualified_at = now
+lead.deleted_at = now
 db.commit()
 ```
 
 This will:
-1. Mark the lead as soft deleted
+1. Mark the lead as qualified and soft deleted
 2. Create an audit log entry with `action="soft_delete"`
 3. Exclude the lead from `/api/leads/sales-view` queries
 
@@ -154,6 +182,20 @@ python migrations/add_lead_soft_delete.py
 ```
 This script adds the `deleted_at` column and index to the `leads` table.
 
+#### 4. Create `qualify_lead` RPC Function (Supabase)
+Run the SQL migration to create the `qualify_lead` RPC function:
+```bash
+# In Supabase SQL Editor or via psql:
+\i migrations/create_qualify_lead_function.sql
+```
+
+Or copy the contents of `migrations/create_qualify_lead_function.sql` and run it in the Supabase SQL Editor.
+
+This migration:
+- Adds the `qualified_at` column to the `leads` table
+- Creates the `qualify_lead` stored procedure for atomic lead qualification
+- Grants execute permissions to authenticated users
+
 ## Testing
 
 ### Run Drive Soft Delete Tests
@@ -169,4 +211,20 @@ python -m pytest tests/test_lead_soft_delete.py -v
 ### Run All Core Tests
 ```bash
 USE_MOCK_DRIVE=true python -m pytest tests/test_soft_delete.py tests/test_lead_soft_delete.py tests/test_permissions.py tests/test_hierarchy.py tests/test_upload_flow.py -v
+```
+
+### Test qualify_lead RPC Function (Supabase Console)
+```sql
+-- Test in Supabase SQL Editor
+SELECT qualify_lead(
+    (SELECT id FROM leads WHERE deleted_at IS NULL LIMIT 1)::UUID,
+    '{"qualified_company_id": null}'::JSONB,
+    (SELECT id FROM users LIMIT 1)::UUID
+);
+
+-- Verify the lead is qualified
+SELECT id, qualified_at, deleted_at FROM leads WHERE qualified_at IS NOT NULL;
+
+-- Verify audit log entry
+SELECT * FROM audit_logs WHERE action = 'qualify_lead' ORDER BY timestamp DESC LIMIT 1;
 ```
