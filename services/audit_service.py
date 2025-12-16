@@ -73,11 +73,17 @@ LEAD_AUDIT_FIELDS: Set[str] = {
     "address_city",
     "address_state",
     "deleted_at",  # Soft delete tracking for qualified leads
+    "qualified_at",  # Qualification timestamp tracking
+    "description",  # Lead description
 }
 
 DEAL_AUDIT_FIELDS: Set[str] = {
     "title",  # Attribute name (maps to 'client_name' database column in Deal model)
     "company_id",
+    "legal_name",  # Migrated from Lead
+    "trade_name",  # Migrated from Lead
+    "owner_user_id",  # Migrated from Lead
+    "description",  # Migrated from Lead
 }
 
 
@@ -187,7 +193,13 @@ def _log_lead_changes(mapper, connection, target):
     
     # Determine action based on changes
     action = "update"
-    if "deleted_at" in changes and changes["deleted_at"].get("new") is not None:
+    # Check if lead is being qualified (qualified_at and deleted_at set together)
+    qualified_at_change = changes.get("qualified_at", {})
+    deleted_at_change = changes.get("deleted_at", {})
+    if qualified_at_change.get("new") is not None and deleted_at_change.get("new") is not None:
+        # Lead was qualified and soft deleted simultaneously
+        action = "qualify_and_soft_delete"
+    elif "deleted_at" in changes and changes["deleted_at"].get("new") is not None:
         # Lead was soft deleted (e.g., qualified)
         action = "soft_delete"
     elif "lead_status_id" in changes:
