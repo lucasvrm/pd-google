@@ -932,7 +932,7 @@ def qualify_lead(
         if not deal.owner_user_id:
             deal.owner_user_id = lead.owner_user_id
         if not deal.description:
-            deal.description = getattr(lead, 'description', None)
+            deal.description = lead.description
         
         # Update lead with qualification data
         lead.qualified_at = now
@@ -947,7 +947,7 @@ def qualify_lead(
             legal_name=lead.legal_name,
             trade_name=lead.trade_name,
             owner_user_id=lead.owner_user_id,
-            description=getattr(lead, 'description', None),
+            description=lead.description,
             tags=tag_ids,
         )
         
