@@ -167,6 +167,182 @@ class TestLeadSoftDeleteInSalesView:
         assert "lead-owned-deleted" not in ids
 
 
+class TestLeadQualifiedFilterInSalesView:
+    """Test that qualified leads (with qualified_at set) are excluded from sales-view by default."""
+
+    def test_qualified_lead_excluded_by_default(self, client):
+        """Leads with qualified_at set (but deleted_at NULL) should be excluded from sales-view by default."""
+        db = TestingSessionLocal()
+        now = datetime.now(timezone.utc)
+        try:
+            active_lead = Lead(
+                id="lead-active-only",
+                title="Active Lead Only",
+                priority_score=50,
+            )
+            # This is the "legacy/inconsistent" scenario mentioned in the bug:
+            # qualified_at is set but deleted_at is NULL
+            qualified_lead = Lead(
+                id="lead-qualified-only",
+                title="Qualified Lead",
+                priority_score=70,
+                qualified_at=now,  # Qualified
+                deleted_at=None,   # But not soft-deleted (inconsistent state)
+            )
+            db.add_all([active_lead, qualified_lead])
+            db.commit()
+        finally:
+            db.close()
+
+        response = client.get("/api/leads/sales-view")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        
+        assert "lead-active-only" in ids
+        assert "lead-qualified-only" not in ids
+        assert body["pagination"]["total"] == 1
+
+    def test_qualified_lead_visible_with_include_qualified_camel_case(self, client):
+        """Leads with qualified_at set should be visible when includeQualified=true (camelCase)."""
+        db = TestingSessionLocal()
+        now = datetime.now(timezone.utc)
+        try:
+            active_lead = Lead(
+                id="lead-active-include",
+                title="Active Lead Include",
+                priority_score=50,
+            )
+            qualified_lead = Lead(
+                id="lead-qualified-include",
+                title="Qualified Lead Include",
+                priority_score=70,
+                qualified_at=now,
+                deleted_at=None,
+            )
+            db.add_all([active_lead, qualified_lead])
+            db.commit()
+        finally:
+            db.close()
+
+        # Using camelCase parameter
+        response = client.get("/api/leads/sales-view?includeQualified=true")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        
+        assert "lead-active-include" in ids
+        assert "lead-qualified-include" in ids
+        assert body["pagination"]["total"] == 2
+
+    def test_qualified_lead_visible_with_include_qualified_snake_case(self, client):
+        """Leads with qualified_at set should be visible when include_qualified=true (snake_case alias)."""
+        db = TestingSessionLocal()
+        now = datetime.now(timezone.utc)
+        try:
+            active_lead = Lead(
+                id="lead-active-snake",
+                title="Active Lead Snake",
+                priority_score=50,
+            )
+            qualified_lead = Lead(
+                id="lead-qualified-snake",
+                title="Qualified Lead Snake",
+                priority_score=70,
+                qualified_at=now,
+                deleted_at=None,
+            )
+            db.add_all([active_lead, qualified_lead])
+            db.commit()
+        finally:
+            db.close()
+
+        # Using snake_case alias parameter
+        response = client.get("/api/leads/sales-view?include_qualified=true")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        
+        assert "lead-active-snake" in ids
+        assert "lead-qualified-snake" in ids
+        assert body["pagination"]["total"] == 2
+
+    def test_soft_deleted_lead_visible_with_include_qualified(self, client):
+        """Leads with deleted_at set should also be visible when includeQualified=true."""
+        db = TestingSessionLocal()
+        now = datetime.now(timezone.utc)
+        try:
+            active_lead = Lead(
+                id="lead-active-deleted-test",
+                title="Active Lead",
+                priority_score=50,
+            )
+            deleted_lead = Lead(
+                id="lead-deleted-test",
+                title="Deleted Lead",
+                priority_score=70,
+                qualified_at=now,
+                deleted_at=now,  # Both qualified and deleted
+            )
+            db.add_all([active_lead, deleted_lead])
+            db.commit()
+        finally:
+            db.close()
+
+        # Without includeQualified - should only return active
+        response = client.get("/api/leads/sales-view")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        assert "lead-active-deleted-test" in ids
+        assert "lead-deleted-test" not in ids
+
+        # With includeQualified=true - should return both
+        response = client.get("/api/leads/sales-view?includeQualified=true")
+        assert response.status_code == 200
+        body = response.json()
+        ids = [item["id"] for item in body["data"]]
+        assert "lead-active-deleted-test" in ids
+        assert "lead-deleted-test" in ids
+
+    def test_pagination_total_reflects_qualified_filter(self, client):
+        """Pagination total should correctly reflect the qualified filter."""
+        db = TestingSessionLocal()
+        now = datetime.now(timezone.utc)
+        try:
+            # Create 3 active leads
+            for i in range(3):
+                db.add(Lead(
+                    id=f"lead-active-pagination-{i}",
+                    title=f"Active Lead {i}",
+                    priority_score=50 + i,
+                ))
+            # Create 2 qualified leads
+            for i in range(2):
+                db.add(Lead(
+                    id=f"lead-qualified-pagination-{i}",
+                    title=f"Qualified Lead {i}",
+                    priority_score=70 + i,
+                    qualified_at=now,
+                    deleted_at=None,
+                ))
+            db.commit()
+        finally:
+            db.close()
+
+        # Default: should return only 3 active leads
+        response = client.get("/api/leads/sales-view")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["pagination"]["total"] == 3
+
+        # With includeQualified=true: should return all 5 leads
+        response = client.get("/api/leads/sales-view?includeQualified=true")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["pagination"]["total"] == 5
+
+
 class TestLeadSoftDeleteAuditLog:
     """Test that audit log entries are created when leads are soft deleted."""
 

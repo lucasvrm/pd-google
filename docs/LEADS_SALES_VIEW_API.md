@@ -5,7 +5,7 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 ## Método e rota
 - **GET** `/api/leads/sales-view`
 - Retorna lista paginada de leads com campos normalizados (tags, owner, contatos, prioridade e próxima ação).
-- **Importante:** Leads com `deleted_at` preenchido (soft deleted / qualificados) são automaticamente excluídos dos resultados.
+- **Importante:** Por padrão, leads com `deleted_at` **ou** `qualified_at` preenchido são automaticamente excluídos dos resultados. Isso garante que apenas leads ativos apareçam na visão comercial.
 
 ## Parâmetros de query
 - `page` (int, padrão `1`, >= 1): página solicitada.
@@ -17,6 +17,7 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 - `priority` (string CSV): filtro por buckets de prioridade (ex.: `hot,warm,cold`).
 - `min_priority_score` (int, opcional): filtra por score mínimo.
 - `has_recent_interaction` (bool, opcional): filtra leads com interação recente.
+- `includeQualified` (bool, opcional, padrão `false`): quando `true`, inclui leads qualificados e/ou soft-deleted na resposta. Útil para auditoria e debug. Alias: `include_qualified` (snake_case).
 - `order_by` (string, padrão `priority`): campo de ordenação. Valores suportados:
   - `priority`: ordena por score de prioridade (maior primeiro por padrão)
   - `last_interaction`: ordena por data da última interação (mais recente primeiro por padrão)
@@ -145,4 +146,4 @@ Todos os erros seguem a convenção global de `/api`:
 - Os campos complexos já chegam normalizados pelo backend: `tags` como objetos `{id,name,color}`, `owner` como objeto simples, `primary_contact` com `id`/`name`/`role`, `priority_description` derivada do bucket e `next_action` com `code`/`label`/`reason`.
 - Métricas e logs estruturados do endpoint estão descritos em [`docs/SALES_VIEW_OBSERVABILITY.md`](./SALES_VIEW_OBSERVABILITY.md).
 - **Documentação completa de Next Actions:** Para detalhamento de regras, precedência, campos influenciadores e checklist de QA, consulte [`docs/backend/next_actions.md`](./backend/next_actions.md).
-- **Soft Delete:** Leads com o campo `deleted_at` preenchido são automaticamente excluídos da resposta. Isso é usado para leads qualificados que não devem mais aparecer na visão comercial. Consulte [`SOFT_DELETE_IMPLEMENTATION.md`](../SOFT_DELETE_IMPLEMENTATION.md) para mais detalhes.
+- **Filtragem de Leads Ativos:** Por padrão, leads com `deleted_at` **ou** `qualified_at` preenchido são automaticamente excluídos da resposta. Isso garante que apenas leads ativos (não qualificados e não deletados) apareçam na visão comercial. Para incluir leads qualificados/deletados (útil para auditoria/debug), use o parâmetro `includeQualified=true`. Consulte [`SOFT_DELETE_IMPLEMENTATION.md`](../SOFT_DELETE_IMPLEMENTATION.md) para mais detalhes.
