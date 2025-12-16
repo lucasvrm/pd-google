@@ -315,7 +315,7 @@ def sales_view(
                     models.Lead.deleted_at.is_(None),
                     models.Lead.qualified_at.is_(None),
                     or_(
-                        models.LeadStatus.code.is_(None),
+                        models.Lead.lead_status_id.is_(None),
                         models.LeadStatus.code != "qualified",
                     ),
                 )
