@@ -17,6 +17,9 @@ Este documento descreve o contrato atual do endpoint de leitura de leads agregad
 - `priority` (string CSV): filtro por buckets de prioridade (ex.: `hot,warm,cold`).
 - `min_priority_score` (int, opcional): filtra por score mínimo.
 - `has_recent_interaction` (bool, opcional): filtra leads com interação recente.
+- `next_action` (string CSV, opcional): filtra pelas próximas ações calculadas no backend.
+  - Aceita lista separada por vírgula (`prepare_for_meeting,call_again`), com trim e deduplicação automáticos.
+  - Aplica lógica de OR (IN) diretamente no SQL, reutilizando o mesmo CASE de ranking usado em `order_by=next_action`.
 - `includeQualified` (bool, opcional, padrão `false`): quando `true`, inclui leads qualificados e/ou soft-deleted na resposta. Útil para auditoria e debug. Alias: `include_qualified` (snake_case).
 - `order_by` (string, padrão `priority`): campo de ordenação. Valores suportados:
   - `priority`: ordena por score de prioridade (maior primeiro por padrão)

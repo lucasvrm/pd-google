@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 # Import the application components
 from main import app
 from database import Base
-from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag, EntityTag, Contact, LeadContact
+from models import Lead, LeadActivityStats, Company, User, Tag, LeadTag, EntityTag, Contact, LeadContact, LeadStatus
 from routers import leads
 
 # Setup in-memory SQLite database with StaticPool to share state across threads/connections
@@ -49,6 +49,7 @@ def test_sales_view_success(client):
     user = User(id="user1", name="Test User", email="test@example.com")
     company = Company(id="comp1", name="Test Corp")
     tag = Tag(id="tag1", name="Urgente", color="#ff0000")
+    status_new = LeadStatus(id="new", code="new", label="Novo", sort_order=1)
     lead = Lead(
         id="lead1",
         title="Big Deal", # maps to legal_name
@@ -65,6 +66,7 @@ def test_sales_view_success(client):
     db.add(tag)
     db.add(user)
     db.add(company)
+    db.add(status_new)
     db.add(lead)
     db.commit()
 

@@ -159,6 +159,11 @@ def sales_view(
     ),
     order_by: str = Query("priority", description="Campo de ordenação"),
     filters: Optional[str] = Query(None, description="Additional filters (JSON)"),
+    next_action: Optional[str] = Query(
+        None,
+        alias="next_action",
+        description="Next action filter (CSV of next_action codes)",
+    ),
     include_qualified: Optional[bool] = Query(
         None,
         alias="includeQualified",
@@ -200,6 +205,7 @@ def sales_view(
     search = _extract_value(search)
     q = _extract_value(q)
     tags = _extract_value(tags)
+    next_action = _extract_value(next_action)
     include_qualified = _extract_value(include_qualified)
     include_qualified_override = _extract_value(include_qualified_override)
 
@@ -252,6 +258,16 @@ def sales_view(
     status_filter = _normalize_filter_list(status)
     origin_filter = _normalize_filter_list(origin)
     priority_filter = _normalize_filter_list(priority)
+    next_action_filter = _normalize_filter_list(next_action)
+    if next_action_filter:
+        seen_actions = set()
+        normalized_next_action_filter = []
+        for value in next_action_filter:
+            value_lower = value.lower()
+            if value_lower and value_lower not in seen_actions:
+                seen_actions.add(value_lower)
+                normalized_next_action_filter.append(value_lower)
+        next_action_filter = normalized_next_action_filter
 
     # Parse order_by to handle descending order with "-" prefix
     order_desc = False
@@ -423,6 +439,137 @@ def sales_view(
                     | (last_interaction_expr.is_(None))
                 )
 
+            next_action_rank = None
+            next_action_code = None
+            if next_action_filter or order_field == "next_action":
+                now = datetime.now(timezone.utc)
+                stale_threshold = now - timedelta(days=STALE_INTERACTION_DAYS)
+                cold_threshold = now - timedelta(days=COLD_LEAD_DAYS)
+                disqualify_threshold = now - timedelta(days=DISQUALIFY_DAYS)
+                post_meeting_threshold = now - timedelta(days=POST_MEETING_WINDOW_DAYS)
+                call_again_threshold = now - timedelta(days=CALL_AGAIN_WINDOW_DAYS)
+                value_asset_stale_threshold = now - timedelta(days=VALUE_ASSET_STALE_DAYS)
+                next_action_conditions = [
+                    (
+                        models.LeadActivityStats.last_event_at > now,
+                        ("prepare_for_meeting", 1),
+                    ),
+                    (
+                        and_(
+                            models.LeadActivityStats.last_event_at.isnot(None),
+                            models.LeadActivityStats.last_event_at <= now,
+                            models.LeadActivityStats.last_event_at >= post_meeting_threshold,
+                            or_(
+                                last_interaction_expr.is_(None),
+                                last_interaction_expr <= models.LeadActivityStats.last_event_at,
+                            ),
+                        ),
+                        ("post_meeting_follow_up", 2),
+                    ),
+                    (
+                        and_(
+                            last_interaction_expr.is_(None),
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        ("call_first_time", 3),
+                    ),
+                    (
+                        and_(
+                            models.Lead.qualified_company_id.isnot(None),
+                            models.Lead.qualified_master_deal_id.is_(None),
+                            models.Lead.disqualified_at.is_(None),
+                        ),
+                        ("handoff_to_deal", 4),
+                    ),
+                    (
+                        and_(
+                            models.LeadActivityStats.engagement_score >= HIGH_ENGAGEMENT_SCORE,
+                            models.Lead.qualified_company_id.is_(None),
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        ("qualify_to_company", 5),
+                    ),
+                    (
+                        and_(
+                            models.LeadActivityStats.engagement_score >= SCHEDULE_MEETING_ENGAGEMENT_THRESHOLD,
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        ("schedule_meeting", 6),
+                    ),
+                    (
+                        and_(
+                            models.LeadActivityStats.last_call_at.isnot(None),
+                            models.LeadActivityStats.last_call_at >= call_again_threshold,
+                        ),
+                        ("call_again", 7),
+                    ),
+                    (
+                        and_(
+                            models.LeadActivityStats.engagement_score >= MEDIUM_ENGAGEMENT_SCORE,
+                            or_(
+                                models.LeadActivityStats.last_value_asset_at.is_(None),
+                                models.LeadActivityStats.last_value_asset_at <= value_asset_stale_threshold,
+                            ),
+                        ),
+                        ("send_value_asset", 8),
+                    ),
+                    (
+                        and_(
+                            last_interaction_expr.isnot(None),
+                            last_interaction_expr <= stale_threshold,
+                            last_interaction_expr > cold_threshold,
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        ("send_follow_up", 9),
+                    ),
+                    (
+                        and_(
+                            last_interaction_expr.isnot(None),
+                            last_interaction_expr <= cold_threshold,
+                            last_interaction_expr > disqualify_threshold,
+                            or_(
+                                models.LeadActivityStats.last_event_at.is_(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                            ),
+                        ),
+                        ("reengage_cold_lead", 10),
+                    ),
+                    (
+                        and_(
+                            last_interaction_expr.isnot(None),
+                            last_interaction_expr <= disqualify_threshold,
+                            models.LeadActivityStats.engagement_score < MEDIUM_ENGAGEMENT_SCORE,
+                            models.Lead.qualified_company_id.is_(None),
+                            models.Lead.qualified_master_deal_id.is_(None),
+                            models.Lead.disqualified_at.is_(None),
+                        ),
+                        ("disqualify", 11),
+                    ),
+                ]
+                next_action_rank = case(
+                    *[(condition, rank) for condition, (_, rank) in next_action_conditions],
+                    else_=12,
+                )
+                next_action_code = case(
+                    *[(condition, code) for condition, (code, _) in next_action_conditions],
+                    else_="send_follow_up",
+                )
+
+            if next_action_filter:
+                base_query = base_query.filter(next_action_code.in_(next_action_filter))
+
             # Apply ordering with direction support
             if order_field == "priority":
                 order_expr = (
@@ -464,152 +611,124 @@ def sales_view(
                         models.User.name.desc().nullsfirst()
                     )
             elif order_field == "next_action":
-                # SQL CASE-based ranking to mimic suggest_next_action logic
-                # Precedence (lower = more urgent):
-                #  1: prepare_for_meeting     - Future event scheduled (last_event_at > now)
-                #  2: post_meeting_follow_up  - Recent past meeting without subsequent interaction
-                #  3: call_first_time         - No interaction at all
-                #  4: handoff_to_deal         - Qualified company but no master deal
-                #  5: qualify_to_company      - High engagement (>=70) without company
-                #  6: schedule_meeting        - Medium+ engagement without upcoming meeting
-                #  7: call_again              - (requires last_call_at field - not available in SQL)
-                #  8: send_value_asset        - (requires last_value_asset_at field - not available in SQL)
-                #  9: send_follow_up          - Stale interaction (>=5 days)
-                # 10: reengage_cold_lead      - Very cold (>=30 days without interaction)
-                # 11: disqualify              - Very long (>=60 days), low engagement, no company/deal
-                # 12: send_follow_up          - Default (keep active)
-                now = datetime.now(timezone.utc)
-                stale_threshold = now - timedelta(days=STALE_INTERACTION_DAYS)
-                cold_threshold = now - timedelta(days=COLD_LEAD_DAYS)
-                disqualify_threshold = now - timedelta(days=DISQUALIFY_DAYS)
-                post_meeting_threshold = now - timedelta(days=POST_MEETING_WINDOW_DAYS)
-                call_again_threshold = now - timedelta(days=CALL_AGAIN_WINDOW_DAYS)
-                value_asset_stale_threshold = now - timedelta(days=VALUE_ASSET_STALE_DAYS)
-                next_action_rank = case(
-                    # Priority 1: prepare_for_meeting (future event scheduled)
-                    (
-                        models.LeadActivityStats.last_event_at > now,
-                        1,
-                    ),
-                    # Priority 2: post_meeting_follow_up (recent past meeting, no interaction after)
-                    (
-                        and_(
-                            models.LeadActivityStats.last_event_at.isnot(None),
-                            models.LeadActivityStats.last_event_at <= now,
-                            models.LeadActivityStats.last_event_at >= post_meeting_threshold,
-                            or_(
+                if next_action_rank is None:
+                    now = datetime.now(timezone.utc)
+                    stale_threshold = now - timedelta(days=STALE_INTERACTION_DAYS)
+                    cold_threshold = now - timedelta(days=COLD_LEAD_DAYS)
+                    disqualify_threshold = now - timedelta(days=DISQUALIFY_DAYS)
+                    post_meeting_threshold = now - timedelta(days=POST_MEETING_WINDOW_DAYS)
+                    call_again_threshold = now - timedelta(days=CALL_AGAIN_WINDOW_DAYS)
+                    value_asset_stale_threshold = now - timedelta(days=VALUE_ASSET_STALE_DAYS)
+                    next_action_rank = case(
+                        (
+                            models.LeadActivityStats.last_event_at > now,
+                            1,
+                        ),
+                        (
+                            and_(
+                                models.LeadActivityStats.last_event_at.isnot(None),
+                                models.LeadActivityStats.last_event_at <= now,
+                                models.LeadActivityStats.last_event_at >= post_meeting_threshold,
+                                or_(
+                                    last_interaction_expr.is_(None),
+                                    last_interaction_expr <= models.LeadActivityStats.last_event_at,
+                                ),
+                            ),
+                            2,
+                        ),
+                        (
+                            and_(
                                 last_interaction_expr.is_(None),
-                                last_interaction_expr <= models.LeadActivityStats.last_event_at,
+                                or_(
+                                    models.LeadActivityStats.last_event_at.is_(None),
+                                    models.LeadActivityStats.last_event_at <= now,
+                                ),
                             ),
+                            3,
                         ),
-                        2,
-                    ),
-                    # Priority 3: call_first_time (no interaction at all)
-                    (
-                        and_(
-                            last_interaction_expr.is_(None),
-                            or_(
-                                models.LeadActivityStats.last_event_at.is_(None),
-                                models.LeadActivityStats.last_event_at <= now,
+                        (
+                            and_(
+                                models.Lead.qualified_company_id.isnot(None),
+                                models.Lead.qualified_master_deal_id.is_(None),
+                                models.Lead.disqualified_at.is_(None),
                             ),
+                            4,
                         ),
-                        3,
-                    ),
-                    # Priority 4: handoff_to_deal (qualified_company_id present, no master deal)
-                    (
-                        and_(
-                            models.Lead.qualified_company_id.isnot(None),
-                            models.Lead.qualified_master_deal_id.is_(None),
-                            models.Lead.disqualified_at.is_(None),
-                        ),
-                        4,
-                    ),
-                    # Priority 5: qualify_to_company (high engagement >=70, no company)
-                    (
-                        and_(
-                            models.LeadActivityStats.engagement_score >= HIGH_ENGAGEMENT_SCORE,
-                            models.Lead.qualified_company_id.is_(None),
-                            or_(
-                                models.LeadActivityStats.last_event_at.is_(None),
-                                models.LeadActivityStats.last_event_at <= now,
+                        (
+                            and_(
+                                models.LeadActivityStats.engagement_score >= HIGH_ENGAGEMENT_SCORE,
+                                models.Lead.qualified_company_id.is_(None),
+                                or_(
+                                    models.LeadActivityStats.last_event_at.is_(None),
+                                    models.LeadActivityStats.last_event_at <= now,
+                                ),
                             ),
+                            5,
                         ),
-                        5,
-                    ),
-                    # Priority 6: schedule_meeting (medium+ engagement, no upcoming meeting)
-                    (
-                        and_(
-                            models.LeadActivityStats.engagement_score >= SCHEDULE_MEETING_ENGAGEMENT_THRESHOLD,
-                            or_(
-                                models.LeadActivityStats.last_event_at.is_(None),
-                                models.LeadActivityStats.last_event_at <= now,
+                        (
+                            and_(
+                                models.LeadActivityStats.engagement_score >= SCHEDULE_MEETING_ENGAGEMENT_THRESHOLD,
+                                or_(
+                                    models.LeadActivityStats.last_event_at.is_(None),
+                                    models.LeadActivityStats.last_event_at <= now,
+                                ),
                             ),
+                            6,
                         ),
-                        6,
-                    ),
-                    # Priority 7: call_again (last_call_at within CALL_AGAIN_WINDOW_DAYS)
-                    # If last_call_at is NULL, this condition fails and falls through to next ranks.
-                    (
-                        and_(
-                            models.LeadActivityStats.last_call_at.isnot(None),
-                            models.LeadActivityStats.last_call_at >= call_again_threshold,
-                        ),
-                        7,
-                    ),
-                    # Priority 8: send_value_asset (engaged lead, last_value_asset_at stale or NULL)
-                    # Applies when: engagement >= MEDIUM and (last_value_asset_at is NULL or >= VALUE_ASSET_STALE_DAYS old)
-                    # If last_value_asset_at is NULL and engagement is high enough, suggest sending value asset.
-                    (
-                        and_(
-                            models.LeadActivityStats.engagement_score >= MEDIUM_ENGAGEMENT_SCORE,
-                            or_(
-                                models.LeadActivityStats.last_value_asset_at.is_(None),
-                                models.LeadActivityStats.last_value_asset_at <= value_asset_stale_threshold,
+                        (
+                            and_(
+                                models.LeadActivityStats.last_call_at.isnot(None),
+                                models.LeadActivityStats.last_call_at >= call_again_threshold,
                             ),
+                            7,
                         ),
-                        8,
-                    ),
-                    # Priority 9: send_follow_up (stale interaction >=5 days but < 30 days)
-                    (
-                        and_(
-                            last_interaction_expr.isnot(None),
-                            last_interaction_expr <= stale_threshold,
-                            last_interaction_expr > cold_threshold,
-                            or_(
-                                models.LeadActivityStats.last_event_at.is_(None),
-                                models.LeadActivityStats.last_event_at <= now,
+                        (
+                            and_(
+                                models.LeadActivityStats.engagement_score >= MEDIUM_ENGAGEMENT_SCORE,
+                                or_(
+                                    models.LeadActivityStats.last_value_asset_at.is_(None),
+                                    models.LeadActivityStats.last_value_asset_at <= value_asset_stale_threshold,
+                                ),
                             ),
+                            8,
                         ),
-                        9,
-                    ),
-                    # Priority 10: reengage_cold_lead (>=30 days, <60 days)
-                    (
-                        and_(
-                            last_interaction_expr.isnot(None),
-                            last_interaction_expr <= cold_threshold,
-                            last_interaction_expr > disqualify_threshold,
-                            or_(
-                                models.LeadActivityStats.last_event_at.is_(None),
-                                models.LeadActivityStats.last_event_at <= now,
+                        (
+                            and_(
+                                last_interaction_expr.isnot(None),
+                                last_interaction_expr <= stale_threshold,
+                                last_interaction_expr > cold_threshold,
+                                or_(
+                                    models.LeadActivityStats.last_event_at.is_(None),
+                                    models.LeadActivityStats.last_event_at <= now,
+                                ),
                             ),
+                            9,
                         ),
-                        10,
-                    ),
-                    # Priority 11: disqualify (>=60 days, low engagement, no company/deal)
-                    (
-                        and_(
-                            last_interaction_expr.isnot(None),
-                            last_interaction_expr <= disqualify_threshold,
-                            models.LeadActivityStats.engagement_score < MEDIUM_ENGAGEMENT_SCORE,
-                            models.Lead.qualified_company_id.is_(None),
-                            models.Lead.qualified_master_deal_id.is_(None),
-                            models.Lead.disqualified_at.is_(None),
+                        (
+                            and_(
+                                last_interaction_expr.isnot(None),
+                                last_interaction_expr <= cold_threshold,
+                                last_interaction_expr > disqualify_threshold,
+                                or_(
+                                    models.LeadActivityStats.last_event_at.is_(None),
+                                    models.LeadActivityStats.last_event_at <= now,
+                                ),
+                            ),
+                            10,
                         ),
-                        11,
-                    ),
-                    # Default: send_follow_up (keep active)
-                    else_=12,
-                )
+                        (
+                            and_(
+                                last_interaction_expr.isnot(None),
+                                last_interaction_expr <= disqualify_threshold,
+                                models.LeadActivityStats.engagement_score < MEDIUM_ENGAGEMENT_SCORE,
+                                models.Lead.qualified_company_id.is_(None),
+                                models.Lead.qualified_master_deal_id.is_(None),
+                                models.Lead.disqualified_at.is_(None),
+                            ),
+                            11,
+                        ),
+                        else_=12,
+                    )
                 if not order_desc:
                     # Ascending: most urgent first (rank 1, 2, 3...)
                     base_query = base_query.order_by(

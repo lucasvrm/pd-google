@@ -51,7 +51,7 @@ def setup_module(module):
         id="lead-hot",
         title="Hot Lead",
         trade_name="Hot Trade",
-        lead_status_id="qualified",
+        lead_status_id="contacted",
         lead_origin_id="inbound",
         owner_user_id=owner.id,
         priority_score=82,
@@ -638,5 +638,79 @@ def test_sales_view_order_by_next_action_with_send_value_asset():
         db.query(models.Lead).filter(models.Lead.id == "lead-value-asset").delete()
         db.commit()
         
+    finally:
+        db.close()
+
+
+def test_sales_view_next_action_filter_prepare_for_meeting():
+    """Filtering by next_action=prepare_for_meeting should return only matching leads and correct totals."""
+    db = TestingSessionLocal()
+    now = datetime.now(timezone.utc)
+    lead_id = "lead-future-meeting"
+    try:
+        lead_future = models.Lead(
+            id=lead_id,
+            title="Future Meeting Lead",
+            trade_name="Future Trade",
+            lead_status_id="contacted",
+            owner_user_id="user-1",
+            priority_score=30,
+            created_at=now,
+            updated_at=now,
+        )
+        stats_future = models.LeadActivityStats(
+            lead_id=lead_id,
+            engagement_score=25,
+            last_event_at=now + timedelta(days=1),
+        )
+        db.add_all([lead_future, stats_future])
+        db.commit()
+
+        result = leads.sales_view(
+            page=1, page_size=10, next_action="prepare_for_meeting", db=db
+        )
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 1
+        assert len(body["data"]) == 1
+        assert body["data"][0]["id"] == lead_id
+        assert body["data"][0]["next_action"]["code"] == "prepare_for_meeting"
+    finally:
+        db.query(models.LeadActivityStats).filter(
+            models.LeadActivityStats.lead_id == lead_id
+        ).delete(synchronize_session=False)
+        db.query(models.Lead).filter(models.Lead.id == lead_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_sales_view_next_action_filter_multiple_codes_or_logic():
+    """CSV next_action filter should apply OR logic, trim spaces, and deduplicate codes."""
+    db = TestingSessionLocal()
+    try:
+        result = leads.sales_view(
+            page=1,
+            page_size=10,
+            next_action="schedule_meeting, send_follow_up, schedule_meeting",
+            db=db,
+        )
+        body = result.model_dump()
+
+        ids = {item["id"] for item in body["data"]}
+        assert body["pagination"]["total"] == 2
+        assert ids == {"lead-recent", "lead-old"}
+    finally:
+        db.close()
+
+
+def test_sales_view_next_action_filter_empty_behaves_like_default():
+    """Empty next_action filter should not change the dataset or pagination totals."""
+    db = TestingSessionLocal()
+    try:
+        result = leads.sales_view(page=1, page_size=10, next_action="", db=db)
+        body = result.model_dump()
+
+        assert body["pagination"]["total"] == 4
+        assert len(body["data"]) == 4
     finally:
         db.close()
