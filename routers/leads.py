@@ -568,10 +568,11 @@ def sales_view(
                     *[(condition, rank) for condition, (_, rank) in next_action_conditions],
                     else_=12,
                 )
-                next_action_code = case(
-                    *[(condition, code) for condition, (code, _) in next_action_conditions],
-                    else_="send_follow_up",
-                )
+                if next_action_filter:
+                    next_action_code = case(
+                        *[(condition, code) for condition, (code, _) in next_action_conditions],
+                        else_="send_follow_up",
+                    )
 
             if next_action_filter:
                 base_query = base_query.filter(next_action_code.in_(next_action_filter))
