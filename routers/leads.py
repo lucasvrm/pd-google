@@ -107,6 +107,20 @@ def _normalize_filter_list(value: Optional[str]) -> List[str]:
     return [item for item in items if item]
 
 
+def _normalize_unique_lower_filter_list(value: Optional[str]) -> List[str]:
+    items = _normalize_filter_list(value)
+    if not items:
+        return []
+    seen_actions = set()
+    normalized_items: List[str] = []
+    for item in items:
+        item_lower = item.lower()
+        if item_lower and item_lower not in seen_actions:
+            seen_actions.add(item_lower)
+            normalized_items.append(item_lower)
+    return normalized_items
+
+
 def _priority_description_from_bucket(bucket: str) -> Optional[str]:
     descriptions = {
         "hot": "Alta prioridade",
@@ -258,16 +272,7 @@ def sales_view(
     status_filter = _normalize_filter_list(status)
     origin_filter = _normalize_filter_list(origin)
     priority_filter = _normalize_filter_list(priority)
-    next_action_filter = _normalize_filter_list(next_action)
-    if next_action_filter:
-        seen_actions = set()
-        normalized_next_action_filter = []
-        for value in next_action_filter:
-            value_lower = value.lower()
-            if value_lower and value_lower not in seen_actions:
-                seen_actions.add(value_lower)
-                normalized_next_action_filter.append(value_lower)
-        next_action_filter = normalized_next_action_filter
+    next_action_filter = _normalize_unique_lower_filter_list(next_action)
 
     # Parse order_by to handle descending order with "-" prefix
     order_desc = False
@@ -300,6 +305,7 @@ def sales_view(
         "days_without_interaction": days_without_interaction,
         "search_term": search_term,
         "tags_filter": tags_filter,
+        "next_action_filter": next_action_filter,
     }
     sales_view_logger.info(
         action="sales_view_request",
