@@ -591,6 +591,12 @@ The system uses a **Google Service Account** as the "organizer" for all calendar
 2. ✅ Adicionar teste cobrindo lead legado (status qualified + `qualified_at` nulo) e verificação com/sem `includeQualified`.
 3. ✅ Atualizar documentação rápida de filtro em `SOFT_DELETE_IMPLEMENTATION.md`.
 
+### Sales-View Next Action Filter - COMPLETE ✅
+1. ✅ Adicionar filtro server-side `next_action` (CSV) em `/api/leads/sales-view`, reutilizando o CASE de ranking usado em `order_by=next_action`.
+2. ✅ Garantir paginação correta após filtragem e OR lógico para múltiplos códigos (deduplicados e com trim).
+3. ✅ Cobrir cenários em testes automatizados (sem filtro, código único `prepare_for_meeting`, múltiplos códigos).
+4. ✅ Documentar parâmetro em `docs/LEADS_SALES_VIEW_API.md`.
+
 ### For Phase 2 (Audit & Security) - MOSTLY COMPLETE 🟡
 1.  ✅ Create `AuditLog` model in `models.py`
 2.  ✅ Implement SQLAlchemy event listeners for Lead/Deal models
