@@ -82,3 +82,22 @@ class QualifyLeadResponse(BaseModel):
     qualified_at: datetime
     deleted_at: datetime
     migrated_fields: MigratedFields
+
+
+# ===== Lead Change Owner Schemas =====
+
+class ChangeOwnerRequest(BaseModel):
+    """Request body for changing lead owner."""
+    new_owner_id: str  # UUID of the new owner (required)
+    current_user_id: str  # UUID of the user making the change (required)
+    add_previous_owner_as_member: bool = True  # Whether to add previous owner as collaborator (default: True)
+
+
+class ChangeOwnerResponse(BaseModel):
+    """Response body for change owner operation."""
+    status: str  # "success"
+    lead_id: str
+    previous_owner_id: Optional[str]
+    new_owner_id: str
+    changed_by: str
+    changed_at: datetime

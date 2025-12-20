@@ -901,8 +901,11 @@ from schemas.leads import (
     QualifyLeadRequest,
     QualifyLeadResponse,
     MigratedFields,
+    ChangeOwnerRequest,
+    ChangeOwnerResponse,
 )
-from services.audit_service import set_audit_actor, clear_audit_actor
+from services.audit_service import set_audit_actor, clear_audit_actor, create_audit_log
+from auth.dependencies import ROLE_HIERARCHY
 
 qualify_lead_logger = StructuredLogger(
     service="lead_qualification", logger_name="pipedesk_drive.lead_qualification"
@@ -1022,6 +1025,137 @@ def qualify_lead(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to qualify lead: {str(exc)}"
+        )
+    finally:
+        clear_audit_actor()
+
+
+# ===== Lead Change Owner Endpoint =====
+
+change_owner_logger = StructuredLogger(
+    service="lead_change_owner", logger_name="pipedesk_drive.lead_change_owner"
+)
+
+
+@router.post("/{lead_id}/change-owner", response_model=ChangeOwnerResponse)
+def change_lead_owner(
+    lead_id: str,
+    request: ChangeOwnerRequest,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Change the owner of a lead.
+    
+    This endpoint:
+    1. Validates that the lead exists
+    2. Validates that the new owner exists
+    3. Validates that the new owner is different from the current owner
+    4. Validates that the user has permission to change ownership (owner, manager, or admin)
+    5. Updates the lead's owner_user_id
+    6. Creates an audit log entry with action="lead.owner_changed"
+    
+    Permission rules:
+    - The current lead owner can transfer ownership
+    - Managers and admins can transfer ownership of any lead
+    """
+    now = datetime.now(timezone.utc)
+    
+    try:
+        # Set audit actor for tracking
+        actor_id = request.current_user_id
+        set_audit_actor(actor_id)
+        
+        # 1. Fetch the lead
+        lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail=f"Lead {lead_id} not found")
+        
+        # 2. Fetch the new owner
+        new_owner = db.query(models.User).filter(models.User.id == request.new_owner_id).first()
+        if not new_owner:
+            raise HTTPException(status_code=404, detail=f"User {request.new_owner_id} not found")
+        
+        # 3. Check if new owner is different from current owner
+        previous_owner_id = lead.owner_user_id
+        if previous_owner_id == request.new_owner_id:
+            raise HTTPException(
+                status_code=400,
+                detail="New owner is the same as current owner"
+            )
+        
+        # 4. Check permissions: only owner, manager, or admin can change ownership
+        # Get the role of the user making the request
+        requesting_user_role = current_user.role.lower() if current_user and current_user.role else ""
+        requesting_user_level = ROLE_HIERARCHY.get(requesting_user_role, 0)
+        
+        # Manager level is 75, so users with level >= 75 (manager, admin) can change any lead
+        is_manager_or_above = requesting_user_level >= 75
+        is_current_owner = (current_user and current_user.id == previous_owner_id)
+        
+        if not is_manager_or_above and not is_current_owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the lead owner, manager, or admin can change lead ownership"
+            )
+        
+        # 5. Update lead's owner_user_id
+        lead.owner_user_id = request.new_owner_id
+        
+        # 6. Create explicit audit log entry for owner change
+        # Note: The SQLAlchemy event hook in audit_service will also log this as "update"
+        # but we want a specific "lead.owner_changed" action for better tracking
+        create_audit_log(
+            session=db,
+            entity_type="lead",
+            entity_id=lead_id,
+            action="lead.owner_changed",
+            changes={
+                "owner_user_id": {
+                    "old": previous_owner_id,
+                    "new": request.new_owner_id,
+                },
+                "changed_by": request.current_user_id,
+            },
+            actor_id=actor_id,
+        )
+        
+        # Commit changes
+        db.commit()
+        
+        change_owner_logger.info(
+            action="lead_owner_changed",
+            message=f"Lead {lead_id} ownership transferred from {previous_owner_id} to {request.new_owner_id}",
+            lead_id=lead_id,
+            previous_owner_id=previous_owner_id,
+            new_owner_id=request.new_owner_id,
+            changed_by=request.current_user_id,
+        )
+        
+        return ChangeOwnerResponse(
+            status="success",
+            lead_id=lead_id,
+            previous_owner_id=previous_owner_id,
+            new_owner_id=request.new_owner_id,
+            changed_by=request.current_user_id,
+            changed_at=now,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        change_owner_logger.error(
+            action="lead_change_owner_error",
+            message=f"Failed to change owner for lead {lead_id}",
+            lead_id=lead_id,
+            new_owner_id=request.new_owner_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to change lead owner: {str(exc)}"
         )
     finally:
         clear_audit_actor()

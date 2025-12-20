@@ -21,11 +21,14 @@ This plan tracks the backend integration work for Google Drive, Calendar, Gmail,
 - Google Tasks CRUD for tasklists.
 - CRM communication and timeline surfaces for lead/deal/contact views.
 - Automation endpoints to move Gmail attachments into Drive.
+- **Lead change owner endpoint** – `POST /api/leads/{lead_id}/change-owner` for transferring lead ownership with RBAC validation and audit logging.
 
 ## Pending items
 - Expose audit log query endpoints for admins/managers.
 - Add rate limiting for sensitive routes.
 - Harden caching strategy for timeline-heavy views.
+- Add `lead_members` table and collaborator tracking (deferred - table does not exist).
+- Add email notification for lead owner changes (deferred - notification service not implemented).
 
 ## Documentation
 All docs have been consolidated under `docs/` with updated references to the current codebase:
