@@ -9,6 +9,7 @@ Tests that:
 5. Audit log entries are created with action="lead.owner_changed"
 """
 
+import os
 import pytest
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
@@ -41,12 +42,11 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[leads.get_db] = override_get_db
-
-
 @pytest.fixture(scope="function", autouse=True)
 def init_db():
     """Initialize the database schema before each test."""
+    # Set the dependency override before each test
+    app.dependency_overrides[leads.get_db] = override_get_db
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)

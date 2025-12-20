@@ -41,6 +41,7 @@ from services.next_action_service import (
 )
 from utils.prometheus import Counter, Histogram
 from utils.structured_logging import StructuredLogger
+from services.lead_service import LeadService
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 sales_view_route_id = "sales_view"
@@ -1030,8 +1031,6 @@ def qualify_lead(
 
 
 # ===== Lead Change Owner Endpoint =====
-
-from services.lead_service import LeadService
 
 change_owner_logger = StructuredLogger(
     service="lead_change_owner", logger_name="pipedesk_drive.lead_change_owner"
