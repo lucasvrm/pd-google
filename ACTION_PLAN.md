@@ -13,6 +13,7 @@ This plan tracks the backend integration work for Google Drive, Calendar, Gmail,
 - **Phase 3: Unified timeline** – ✅ Timeline endpoint merges Calendar events, Gmail messages, and audit logs for CRM entities.
 - **Phase 4: Sync & monitoring** – 🟢 Webhook handling for Drive/Calendar is active; health checks and Prometheus metrics are exposed.
 - **Phase 5: Automation & SLA** – 🟡 Email automation endpoints exist; SLA/priority workers are wired but feature-flagged via the scheduler.
+- **Phase 6: Lead Management** – ✅ Lead qualification, disqualification, and ownership change endpoints are live.
 
 ## Current implementation highlights
 - Drive hierarchy endpoints with soft delete, permissions management, search, and repair flows.
@@ -21,6 +22,7 @@ This plan tracks the backend integration work for Google Drive, Calendar, Gmail,
 - Google Tasks CRUD for tasklists.
 - CRM communication and timeline surfaces for lead/deal/contact views.
 - Automation endpoints to move Gmail attachments into Drive.
+- **Lead ownership change** endpoint with RBAC validation, member tracking, and audit logging.
 
 ## Pending items
 - Expose audit log query endpoints for admins/managers.
@@ -31,4 +33,5 @@ This plan tracks the backend integration work for Google Drive, Calendar, Gmail,
 All docs have been consolidated under `docs/` with updated references to the current codebase:
 - `docs/overview.md` – capability overview.
 - `docs/api/` – per-router endpoint references.
+- `docs/api/leads.md` – lead endpoints including qualification and ownership change.
 - `docs/operations/` – migrations and soft delete behavior.

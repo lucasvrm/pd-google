@@ -110,6 +110,7 @@ class User(Base):
     id = Column(String, primary_key=True)
     name = Column(String)
     email = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=True)
 
 
 class Contact(Base):
@@ -137,6 +138,24 @@ class LeadContact(Base):
 
     # Relationships
     contact = relationship("Contact")
+
+
+class LeadMember(Base):
+    """
+    Junction table mapping leads to member users (collaborators).
+    Used to track users who have been previous owners or are collaborating on the lead.
+    """
+    __tablename__ = "lead_members"
+
+    lead_id = Column(String, ForeignKey("leads.id"), primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), primary_key=True)
+    role = Column(String, default="collaborator")  # Role can be "collaborator", "viewer", etc.
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+    added_by = Column(String, ForeignKey("users.id"), nullable=True)  # User who added this member
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    added_by_user = relationship("User", foreign_keys=[added_by])
 
 
 class LeadStatus(Base):
