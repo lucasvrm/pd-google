@@ -832,7 +832,14 @@ def sales_view(
                 elif task_next_action_enabled:
                     # Sistema novo: buscar de lead_tasks
                     next_action_data = _get_next_action_from_tasks(db, lead.id)
-                # Se ambos desabilitados, next_action fica None
+                
+                # Fallback: se nenhum sistema está habilitado ou não retornou ação, usar padrão
+                if next_action_data is None:
+                    next_action_data = {
+                        "code": "send_follow_up",
+                        "label": "Enviar follow-up",
+                        "reason": "Manter relacionamento ativo",
+                    }
                 # ========== FIM MODIFICADO ==========
 
                 # Create LeadOwner only if ID is present or handle as Optional

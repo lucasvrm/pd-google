@@ -39,13 +39,13 @@ class TestFeatureFlagsService:
         mock_result.fetchall.return_value = []
         mock_db.execute.return_value = mock_result
         
-        # Auto features desabilitadas por padrão
-        assert is_auto_priority_enabled(db=mock_db) is False
-        assert is_auto_next_action_enabled(db=mock_db) is False
+        # Auto features habilitadas por padrão (backward compatibility)
+        assert is_auto_priority_enabled(db=mock_db) is True
+        assert is_auto_next_action_enabled(db=mock_db) is True
         
-        # Manual features habilitadas por padrão
-        assert is_manual_priority_enabled(db=mock_db) is True
-        assert is_task_next_action_enabled(db=mock_db) is True
+        # Manual features desabilitadas por padrão
+        assert is_manual_priority_enabled(db=mock_db) is False
+        assert is_task_next_action_enabled(db=mock_db) is False
     
     def test_cache_is_used(self):
         """Cache deve evitar queries repetidas"""
@@ -140,15 +140,15 @@ class TestFeatureFlagsService:
         assert mock_db.execute.call_count == 2
     
     def test_error_handling_with_fallback_defaults(self):
-        """Quando há erro no banco, deve usar defaults seguros"""
+        """Quando há erro no banco, deve usar defaults seguros (backward compatibility)"""
         mock_db = MagicMock()
         mock_db.execute.side_effect = Exception("Database error")
         
-        # Deve retornar defaults sem quebrar
-        assert is_auto_priority_enabled(db=mock_db) is False
-        assert is_auto_next_action_enabled(db=mock_db) is False
-        assert is_manual_priority_enabled(db=mock_db) is True
-        assert is_task_next_action_enabled(db=mock_db) is True
+        # Deve retornar defaults seguros (sistema antigo habilitado)
+        assert is_auto_priority_enabled(db=mock_db) is True
+        assert is_auto_next_action_enabled(db=mock_db) is True
+        assert is_manual_priority_enabled(db=mock_db) is False
+        assert is_task_next_action_enabled(db=mock_db) is False
     
     def test_convenience_functions(self):
         """Testa as funções de conveniência"""

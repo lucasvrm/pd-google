@@ -74,12 +74,13 @@ def _refresh_cache(db: Session) -> None:
             error=exc,
         )
         # Manter cache antigo ou definir defaults
+        # Defaults seguros: sistemas antigos habilitados para backward compatibility
         if not _cache:
             _cache = {
-                "feature_lead_auto_priority": False,
-                "feature_lead_auto_next_action": False,
-                "feature_lead_manual_priority": True,
-                "feature_lead_task_next_action": True,
+                "feature_lead_auto_priority": True,  # OLD system enabled by default
+                "feature_lead_auto_next_action": True,  # OLD system enabled by default
+                "feature_lead_manual_priority": False,
+                "feature_lead_task_next_action": False,
             }
             _cache_timestamp = datetime.now(timezone.utc)
 
@@ -114,22 +115,22 @@ def get_feature_flag(key: str, default: bool = False, db: Optional[Session] = No
 # Funções de conveniência
 def is_auto_priority_enabled(db: Optional[Session] = None) -> bool:
     """Verifica se cálculo automático de prioridade está habilitado."""
-    return get_feature_flag("feature_lead_auto_priority", default=False, db=db)
+    return get_feature_flag("feature_lead_auto_priority", default=True, db=db)
 
 
 def is_auto_next_action_enabled(db: Optional[Session] = None) -> bool:
     """Verifica se sugestão automática de next action está habilitada."""
-    return get_feature_flag("feature_lead_auto_next_action", default=False, db=db)
+    return get_feature_flag("feature_lead_auto_next_action", default=True, db=db)
 
 
 def is_manual_priority_enabled(db: Optional[Session] = None) -> bool:
     """Verifica se prioridade manual está habilitada."""
-    return get_feature_flag("feature_lead_manual_priority", default=True, db=db)
+    return get_feature_flag("feature_lead_manual_priority", default=False, db=db)
 
 
 def is_task_next_action_enabled(db: Optional[Session] = None) -> bool:
     """Verifica se sistema de tarefas para next action está habilitado."""
-    return get_feature_flag("feature_lead_task_next_action", default=True, db=db)
+    return get_feature_flag("feature_lead_task_next_action", default=False, db=db)
 
 
 def clear_cache() -> None:
