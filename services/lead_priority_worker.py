@@ -7,6 +7,7 @@ from sqlalchemy.orm import joinedload
 import models
 from database import SessionLocal
 from services.lead_priority_service import calculate_lead_priority
+from services.feature_flags_service import is_auto_priority_enabled
 from utils.structured_logging import StructuredLogger
 
 
@@ -23,6 +24,20 @@ class LeadPriorityWorker:
         self.session_factory = session_factory
 
     def run(self) -> None:
+        # ========== NOVO: Verificar feature flag ==========
+        db_check = self.session_factory()
+        try:
+            if not is_auto_priority_enabled(db_check):
+                priority_logger.info(
+                    action="lead_priority_score",
+                    status="skipped",
+                    message="Cálculo automático de prioridade desabilitado (feature_lead_auto_priority=false)",
+                )
+                return
+        finally:
+            db_check.close()
+        # ========== FIM NOVO ==========
+
         started = time.time()
         processed = 0
         errors = 0
