@@ -5,7 +5,7 @@ from typing import Any, List, Literal, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg2 import Error as PsycopgError
-from sqlalchemy import and_, case, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
@@ -36,6 +36,11 @@ from services.next_action_service import (
     STALE_INTERACTION_DAYS,
     VALUE_ASSET_STALE_DAYS,
     suggest_next_action,
+)
+from services.feature_flags_service import (
+    is_auto_next_action_enabled,
+    is_auto_priority_enabled,
+    is_task_next_action_enabled,
 )
 from utils.prometheus import Counter, Histogram
 from utils.structured_logging import StructuredLogger
@@ -128,6 +133,55 @@ def _priority_description_from_bucket(bucket: str) -> Optional[str]:
         "cold": "Baixa prioridade",
     }
     return descriptions.get(bucket)
+
+
+def _get_next_action_from_tasks(db: Session, lead_id: str) -> Optional[dict]:
+    """
+    Busca a próxima ação de um lead da tabela lead_tasks.
+    
+    Returns:
+        Dict com code, label, reason, task_id ou None
+    """
+    try:
+        result = db.execute(
+            text("""
+                SELECT 
+                    lt.id,
+                    lt.title,
+                    lt.description,
+                    lt.due_date,
+                    ltt.code as template_code
+                FROM lead_tasks lt
+                LEFT JOIN lead_task_templates ltt ON ltt.id = lt.template_id
+                WHERE lt.lead_id = :lead_id
+                  AND lt.is_next_action = true
+                  AND lt.status NOT IN ('completed', 'cancelled')
+                ORDER BY lt.sort_order
+                LIMIT 1
+            """),
+            {"lead_id": lead_id}
+        )
+        row = result.fetchone()
+        
+        if row is None:
+            return None
+        
+        task_id, title, description, due_date, template_code = row
+        
+        return {
+            "code": template_code or "custom_task",
+            "label": title,
+            "reason": description or "",
+            "dueAt": due_date.isoformat() if due_date else None,
+            "taskId": str(task_id),
+        }
+    except Exception as exc:
+        sales_view_logger.warning(
+            action="get_next_action_from_tasks",
+            message=f"Erro ao buscar next action de lead_tasks para lead {lead_id}",
+            error=str(exc),
+        )
+        return None
 
 
 @router.get("/sales-view", response_model=LeadSalesViewResponse)
@@ -313,6 +367,12 @@ def sales_view(
         route=sales_view_route_id,
         params=request_params,
     )
+
+    # ========== NOVO: Ler feature flags uma vez ==========
+    auto_priority_enabled = is_auto_priority_enabled(db)
+    auto_next_action_enabled = is_auto_next_action_enabled(db)
+    task_next_action_enabled = is_task_next_action_enabled(db)
+    # ========== FIM NOVO ==========
 
     try:
         try:
@@ -713,16 +773,20 @@ def sales_view(
         for lead in leads:
             try:
                 stats = lead.activity_stats
-                # Handle potential null priority_score in DB gracefully
-                db_score = (
-                    lead.priority_score if lead.priority_score is not None else None
-                )
-                score = (
-                    db_score
-                    if db_score is not None
-                    else calculate_lead_priority(lead, stats)
-                )
+                
+                # ========== MODIFICADO: Respeitar feature flag de prioridade ==========
+                db_score = lead.priority_score if lead.priority_score is not None else None
+                
+                if auto_priority_enabled:
+                    # Sistema antigo: calcular se não existe no banco
+                    score = db_score if db_score is not None else calculate_lead_priority(lead, stats)
+                else:
+                    # Sistema novo: usar apenas valor do banco (prioridade manual)
+                    # Se não existe, default para 0 (cold)
+                    score = db_score if db_score is not None else 0
+                
                 bucket = classify_priority_bucket(score)
+                # ========== FIM MODIFICADO ==========
 
                 last_interaction = (
                     stats.last_interaction_at
@@ -759,8 +823,24 @@ def sales_view(
                         if tag and tag.name is not None and tag.id is not None
                     ]
 
-                # Robust next action
-                next_action = suggest_next_action(lead, stats)
+                # ========== MODIFICADO: Respeitar feature flag de next_action ==========
+                next_action_data = None
+                
+                if auto_next_action_enabled:
+                    # Sistema antigo: calcular next action automaticamente
+                    next_action_data = suggest_next_action(lead, stats)
+                elif task_next_action_enabled:
+                    # Sistema novo: buscar de lead_tasks
+                    next_action_data = _get_next_action_from_tasks(db, lead.id)
+                
+                # Fallback: se nenhum sistema está habilitado ou não retornou ação, usar padrão
+                if next_action_data is None:
+                    next_action_data = {
+                        "code": "send_follow_up",
+                        "label": "Enviar follow-up",
+                        "reason": "Manter relacionamento ativo",
+                    }
+                # ========== FIM MODIFICADO ==========
 
                 # Create LeadOwner only if ID is present or handle as Optional
                 lead_owner: Optional[LeadOwner] = None
@@ -814,7 +894,7 @@ def sales_view(
                         address_state=lead.address_state,
                         tags=tags_list,
                         primary_contact=primary_contact,
-                        next_action=next_action,
+                        next_action=next_action_data,
                     )
                 )
             except Exception as item_exc:

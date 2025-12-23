@@ -73,6 +73,9 @@ def test_priority_worker_refreshes_scores_and_logs(monkeypatch):
     monkeypatch.setattr(lead_priority_worker, "priority_logger", logger)
 
     monkeypatch.setattr(lead_priority_worker, "calculate_lead_priority", lambda *_, **__: 77)
+    
+    # Mock feature flag to enable auto priority
+    monkeypatch.setattr(lead_priority_worker, "is_auto_priority_enabled", lambda *_, **__: True)
 
     worker = lead_priority_worker.LeadPriorityWorker(session_factory=override_session_factory)
     worker.run()
@@ -88,4 +91,23 @@ def test_priority_worker_refreshes_scores_and_logs(monkeypatch):
     assert telemetry["processed"] == 1
     assert telemetry["errors"] == 0
     assert telemetry["errors_by_lead"] == []
+
+
+def test_priority_worker_skips_when_feature_disabled(monkeypatch):
+    """Test that worker skips execution when feature flag is disabled"""
+    logger = DummyLogger()
+    monkeypatch.setattr(lead_priority_worker, "priority_logger", logger)
+    
+    # Mock feature flag to disable auto priority
+    monkeypatch.setattr(lead_priority_worker, "is_auto_priority_enabled", lambda *_, **__: False)
+
+    worker = lead_priority_worker.LeadPriorityWorker(session_factory=override_session_factory)
+    worker.run()
+
+    # Should log that it was skipped
+    assert logger.info_calls, "Should log skip message"
+    skip_log = logger.info_calls[0]
+    assert skip_log["action"] == "lead_priority_score"
+    assert skip_log["status"] == "skipped"
+    assert "desabilitado" in skip_log["message"]
 
