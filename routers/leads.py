@@ -1177,12 +1177,23 @@ def update_lead_priority(
 
 def _map_lead_task(task: models.LeadTask) -> LeadTaskResponse:
     """Mapeia model para response."""
-    template = task.template if task.template_id else None
+    template = None
+    template_code = None
+    
+    if task.template_id:
+        # Try to access the template relationship, it should be loaded via joinedload or refresh
+        try:
+            if hasattr(task, 'template') and task.template:
+                template_code = task.template.code
+        except Exception:
+            # If template relationship is not loaded, template_code will remain None
+            pass
+    
     return LeadTaskResponse(
         id=str(task.id),
         lead_id=str(task.lead_id),
         template_id=str(task.template_id) if task.template_id else None,
-        template_code=template.code if template else None,
+        template_code=template_code,
         title=task.title,
         description=task.description,
         is_next_action=task.is_next_action,
@@ -1208,7 +1219,9 @@ def list_lead_tasks(
     if not lead:
         raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
     
-    query = db.query(models.LeadTask).filter(models.LeadTask.lead_id == lead_id)
+    query = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(models.LeadTask.lead_id == lead_id)
     
     if not include_completed:
         query = query.filter(models.LeadTask.status.notin_(["completed", "cancelled"]))
@@ -1317,7 +1330,9 @@ def update_lead_task(
     db: Session = Depends(get_db),
 ):
     """Atualiza uma tarefa."""
-    task = db.query(models.LeadTask).filter(
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
         models.LeadTask.id == task_id,
         models.LeadTask.lead_id == lead_id,
     ).first()
@@ -1369,7 +1384,9 @@ def complete_lead_task(
     db: Session = Depends(get_db),
 ):
     """Marca tarefa como completa."""
-    task = db.query(models.LeadTask).filter(
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
         models.LeadTask.id == task_id,
         models.LeadTask.lead_id == lead_id,
     ).first()
@@ -1395,7 +1412,9 @@ def set_task_as_next_action(
     db: Session = Depends(get_db),
 ):
     """Define tarefa como próxima ação do lead."""
-    task = db.query(models.LeadTask).filter(
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
         models.LeadTask.id == task_id,
         models.LeadTask.lead_id == lead_id,
     ).first()
