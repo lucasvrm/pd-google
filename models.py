@@ -245,6 +245,42 @@ class LeadTag(Base):
     tag_id = Column(String, ForeignKey("tags.id"), primary_key=True)
 
 
+class LeadTaskTemplate(Base):
+    """Templates de tarefas pré-definidas para leads."""
+    __tablename__ = "lead_task_templates"
+
+    id = Column(String, primary_key=True)
+    code = Column(String, unique=True, nullable=False)
+    label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeadTask(Base):
+    """Tarefas vinculadas a leads."""
+    __tablename__ = "lead_tasks"
+
+    id = Column(String, primary_key=True)
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=False, index=True)
+    template_id = Column(String, ForeignKey("lead_task_templates.id"), nullable=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    is_next_action = Column(Boolean, default=False)
+    status = Column(String, default="pending")
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    sort_order = Column(Integer, default=0)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_by = Column(String, ForeignKey("profiles.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(String, ForeignKey("profiles.id"), nullable=True)
+
+    # Relationships
+    lead = relationship("Lead", backref="lead_tasks")
+    template = relationship("LeadTaskTemplate")
+
+
 class EntityTag(Base):
     """
     Maps the entity_tags table used by the frontend to associate tags with any entity.

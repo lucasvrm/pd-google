@@ -16,6 +16,7 @@ from routers import (
     leads,
     timeline,
     automation,
+    lead_task_templates,
 )
 from database import engine
 import models
@@ -200,6 +201,7 @@ app.include_router(health.router)
 app.include_router(leads.router)
 app.include_router(timeline.router)
 app.include_router(automation.router)
+app.include_router(lead_task_templates.router)
 
 
 @app.get("/metrics")
