@@ -1,4 +1,5 @@
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Literal, Optional
 
@@ -20,6 +21,15 @@ from schemas.leads import (
     Pagination,
     PrimaryContact,
     TagItem,
+)
+from schemas.lead_tasks import (
+    LeadTaskCreate,
+    LeadTaskCreateFromTemplate,
+    LeadTaskListResponse,
+    LeadTaskResponse,
+    LeadTaskUpdate,
+    UpdateLeadPriorityRequest,
+    UpdateLeadPriorityResponse,
 )
 from services.lead_priority_service import (
     calculate_lead_priority,
@@ -1105,3 +1115,320 @@ def qualify_lead(
         )
     finally:
         clear_audit_actor()
+
+
+# ============================================================================
+# LEAD PRIORITY ENDPOINT
+# ============================================================================
+
+PRIORITY_BUCKET_TO_SCORE = {
+    "hot": 85,    # >= 70 = hot
+    "warm": 55,   # 40-69 = warm
+    "cold": 20,   # < 40 = cold
+}
+
+
+@router.patch("/{lead_id}/priority", response_model=UpdateLeadPriorityResponse)
+def update_lead_priority(
+    lead_id: str,
+    data: UpdateLeadPriorityRequest,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Atualiza prioridade do lead manualmente."""
+    from services.feature_flags_service import is_manual_priority_enabled
+    
+    if not is_manual_priority_enabled(db):
+        raise HTTPException(
+            status_code=403,
+            detail="Prioridade manual desabilitada. Habilite feature_lead_manual_priority."
+        )
+    
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+    
+    score = PRIORITY_BUCKET_TO_SCORE.get(data.priority_bucket, 20)
+    lead.priority_score = score
+    
+    db.commit()
+    db.refresh(lead)
+    
+    sales_view_logger.info(
+        action="update_lead_priority",
+        message=f"Prioridade atualizada: {lead_id} → {data.priority_bucket}",
+        lead_id=lead_id,
+        priority_bucket=data.priority_bucket,
+        priority_score=score,
+        actor_id=current_user.id if current_user else None,
+    )
+    
+    return UpdateLeadPriorityResponse(
+        lead_id=lead_id,
+        priority_bucket=data.priority_bucket,
+        priority_score=score,
+        updated_at=lead.updated_at or datetime.now(timezone.utc),
+    )
+
+
+# ============================================================================
+# LEAD TASKS ENDPOINTS
+# ============================================================================
+
+def _map_lead_task(task: models.LeadTask) -> LeadTaskResponse:
+    """Mapeia model para response."""
+    template = None
+    template_code = None
+    
+    if task.template_id:
+        # Try to access the template relationship, it should be loaded via joinedload or refresh
+        try:
+            if hasattr(task, 'template') and task.template:
+                template_code = task.template.code
+        except Exception:
+            # If template relationship is not loaded, template_code will remain None
+            pass
+    
+    return LeadTaskResponse(
+        id=str(task.id),
+        lead_id=str(task.lead_id),
+        template_id=str(task.template_id) if task.template_id else None,
+        template_code=template_code,
+        title=task.title,
+        description=task.description,
+        is_next_action=task.is_next_action,
+        status=task.status,
+        due_date=task.due_date,
+        sort_order=task.sort_order,
+        completed_at=task.completed_at,
+        completed_by=str(task.completed_by) if task.completed_by else None,
+        created_at=task.created_at,
+        created_by=str(task.created_by) if task.created_by else None,
+    )
+
+
+@router.get("/{lead_id}/tasks", response_model=LeadTaskListResponse)
+def list_lead_tasks(
+    lead_id: str,
+    include_completed: bool = Query(False),
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Lista tarefas de um lead."""
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+    
+    query = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(models.LeadTask.lead_id == lead_id)
+    
+    if not include_completed:
+        query = query.filter(models.LeadTask.status.notin_(["completed", "cancelled"]))
+    
+    tasks = query.order_by(
+        models.LeadTask.is_next_action.desc(),
+        models.LeadTask.sort_order,
+    ).all()
+    
+    next_action = next(
+        (t for t in tasks if t.is_next_action and t.status not in ["completed", "cancelled"]),
+        None
+    )
+    
+    return LeadTaskListResponse(
+        data=[_map_lead_task(t) for t in tasks],
+        total=len(tasks),
+        next_action=_map_lead_task(next_action) if next_action else None,
+    )
+
+
+@router.post("/{lead_id}/tasks", response_model=LeadTaskResponse, status_code=201)
+def create_lead_task(
+    lead_id: str,
+    data: LeadTaskCreate,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Cria tarefa customizada para um lead."""
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+    
+    max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
+        models.LeadTask.lead_id == lead_id
+    ).scalar() or 0
+    
+    task = models.LeadTask(
+        id=str(uuid.uuid4()),
+        lead_id=lead_id,
+        template_id=data.template_id,
+        title=data.title,
+        description=data.description,
+        is_next_action=data.is_next_action,
+        status=data.status,
+        due_date=data.due_date,
+        sort_order=max_order + 1,
+        created_by=current_user.id if current_user else None,
+    )
+    
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    
+    return _map_lead_task(task)
+
+
+@router.post("/{lead_id}/tasks/from-template", response_model=LeadTaskResponse, status_code=201)
+def create_task_from_template(
+    lead_id: str,
+    data: LeadTaskCreateFromTemplate,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Cria tarefa a partir de um template (drag-and-drop)."""
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+    
+    template = db.query(models.LeadTaskTemplate).filter(
+        models.LeadTaskTemplate.id == data.template_id
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template {data.template_id} não encontrado")
+    
+    max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
+        models.LeadTask.lead_id == lead_id
+    ).scalar() or 0
+    
+    task = models.LeadTask(
+        id=str(uuid.uuid4()),
+        lead_id=lead_id,
+        template_id=template.id,
+        title=template.label,
+        description=template.description,
+        is_next_action=data.is_next_action,
+        status="pending",
+        due_date=data.due_date,
+        sort_order=max_order + 1,
+        created_by=current_user.id if current_user else None,
+    )
+    
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    
+    return _map_lead_task(task)
+
+
+@router.patch("/{lead_id}/tasks/{task_id}", response_model=LeadTaskResponse)
+def update_lead_task(
+    lead_id: str,
+    task_id: str,
+    data: LeadTaskUpdate,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Atualiza uma tarefa."""
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
+        models.LeadTask.id == task_id,
+        models.LeadTask.lead_id == lead_id,
+    ).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Tarefa {task_id} não encontrada")
+    
+    update_data = data.model_dump(exclude_unset=True)
+    
+    # Auto-preencher completed_at/completed_by
+    if update_data.get("status") == "completed" and task.status != "completed":
+        update_data["completed_at"] = datetime.now(timezone.utc)
+        update_data["completed_by"] = current_user.id if current_user else None
+    
+    for key, value in update_data.items():
+        setattr(task, key, value)
+    
+    db.commit()
+    db.refresh(task)
+    
+    return _map_lead_task(task)
+
+
+@router.delete("/{lead_id}/tasks/{task_id}", status_code=204)
+def delete_lead_task(
+    lead_id: str,
+    task_id: str,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Remove uma tarefa."""
+    task = db.query(models.LeadTask).filter(
+        models.LeadTask.id == task_id,
+        models.LeadTask.lead_id == lead_id,
+    ).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Tarefa {task_id} não encontrada")
+    
+    db.delete(task)
+    db.commit()
+
+
+@router.post("/{lead_id}/tasks/{task_id}/complete", response_model=LeadTaskResponse)
+def complete_lead_task(
+    lead_id: str,
+    task_id: str,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Marca tarefa como completa."""
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
+        models.LeadTask.id == task_id,
+        models.LeadTask.lead_id == lead_id,
+    ).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Tarefa {task_id} não encontrada")
+    
+    task.status = "completed"
+    task.completed_at = datetime.now(timezone.utc)
+    task.completed_by = current_user.id if current_user else None
+    
+    db.commit()
+    db.refresh(task)
+    
+    return _map_lead_task(task)
+
+
+@router.patch("/{lead_id}/tasks/{task_id}/set-next-action", response_model=LeadTaskResponse)
+def set_task_as_next_action(
+    lead_id: str,
+    task_id: str,
+    current_user: Optional[UserContext] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Define tarefa como próxima ação do lead."""
+    task = db.query(models.LeadTask).options(
+        joinedload(models.LeadTask.template)
+    ).filter(
+        models.LeadTask.id == task_id,
+        models.LeadTask.lead_id == lead_id,
+    ).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Tarefa {task_id} não encontrada")
+    
+    if task.status in ["completed", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Não é possível definir tarefa finalizada como próxima ação")
+    
+    # O trigger do banco vai desmarcar outras next_actions
+    task.is_next_action = True
+    db.commit()
+    db.refresh(task)
+    
+    return _map_lead_task(task)
+
