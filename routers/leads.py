@@ -1251,32 +1251,87 @@ def create_lead_task(
     db: Session = Depends(get_db),
 ):
     """Cria tarefa customizada para um lead."""
-    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
-    
-    max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
-        models.LeadTask.lead_id == lead_id
-    ).scalar() or 0
-    
-    task = models.LeadTask(
-        id=str(uuid.uuid4()),
-        lead_id=lead_id,
-        template_id=data.template_id,
-        title=data.title,
-        description=data.description,
-        is_next_action=data.is_next_action,
-        status=data.status,
-        due_date=data.due_date,
-        sort_order=max_order + 1,
-        created_by=current_user.id if current_user else None,
-    )
-    
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    
-    return _map_lead_task(task)
+    try:
+        # Validate lead exists
+        lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+        
+        # If template_id is provided, validate it exists
+        if data.template_id:
+            template = db.query(models.LeadTaskTemplate).filter(
+                models.LeadTaskTemplate.id == data.template_id
+            ).first()
+            if not template:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Template {data.template_id} não encontrado"
+                )
+        
+        # Get max sort order
+        max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
+            models.LeadTask.lead_id == lead_id
+        ).scalar() or 0
+        
+        # Create task
+        task = models.LeadTask(
+            id=str(uuid.uuid4()),
+            lead_id=lead_id,
+            template_id=data.template_id,
+            title=data.title,
+            description=data.description,
+            is_next_action=data.is_next_action,
+            status=data.status,
+            due_date=data.due_date,
+            sort_order=max_order + 1,
+            created_by=current_user.id if current_user else None,
+        )
+        
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        
+        sales_view_logger.info(
+            action="create_lead_task",
+            message=f"Tarefa customizada criada para lead {lead_id}",
+            lead_id=lead_id,
+            task_id=task.id,
+            is_next_action=data.is_next_action,
+            actor_id=current_user.id if current_user else None,
+        )
+        
+        return _map_lead_task(task)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except ProgrammingError as pg_exc:
+        # Handle database programming errors (e.g., constraint violations)
+        db.rollback()
+        sales_view_logger.error(
+            action="create_lead_task_db_error",
+            message=f"Erro de banco ao criar tarefa para lead {lead_id}",
+            lead_id=lead_id,
+            error=str(pg_exc),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Erro ao criar tarefa. Verifique se os dados estão corretos."
+        )
+    except Exception as exc:
+        # Handle unexpected errors
+        db.rollback()
+        sales_view_logger.error(
+            action="create_lead_task_error",
+            message=f"Erro inesperado ao criar tarefa para lead {lead_id}",
+            lead_id=lead_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao criar tarefa: {str(exc)}"
+        )
 
 
 @router.post("/{lead_id}/tasks/from-template", response_model=LeadTaskResponse, status_code=201)
@@ -1287,38 +1342,98 @@ def create_task_from_template(
     db: Session = Depends(get_db),
 ):
     """Cria tarefa a partir de um template (drag-and-drop)."""
-    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
-    
-    template = db.query(models.LeadTaskTemplate).filter(
-        models.LeadTaskTemplate.id == data.template_id
-    ).first()
-    if not template:
-        raise HTTPException(status_code=404, detail=f"Template {data.template_id} não encontrado")
-    
-    max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
-        models.LeadTask.lead_id == lead_id
-    ).scalar() or 0
-    
-    task = models.LeadTask(
-        id=str(uuid.uuid4()),
-        lead_id=lead_id,
-        template_id=template.id,
-        title=template.label,
-        description=template.description,
-        is_next_action=data.is_next_action,
-        status="pending",
-        due_date=data.due_date,
-        sort_order=max_order + 1,
-        created_by=current_user.id if current_user else None,
-    )
-    
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    
-    return _map_lead_task(task)
+    try:
+        # Validate lead exists
+        lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail=f"Lead {lead_id} não encontrado")
+        
+        # Validate template exists
+        template = db.query(models.LeadTaskTemplate).filter(
+            models.LeadTaskTemplate.id == data.template_id
+        ).first()
+        if not template:
+            raise HTTPException(status_code=404, detail=f"Template {data.template_id} não encontrado")
+        
+        # Check if template is active
+        if not template.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template {data.template_id} está inativo e não pode ser usado"
+            )
+        
+        # Get max sort order
+        max_order = db.query(func.max(models.LeadTask.sort_order)).filter(
+            models.LeadTask.lead_id == lead_id
+        ).scalar() or 0
+        
+        # Create task
+        task = models.LeadTask(
+            id=str(uuid.uuid4()),
+            lead_id=lead_id,
+            template_id=template.id,
+            title=template.label,
+            description=template.description,
+            is_next_action=data.is_next_action,
+            status="pending",
+            due_date=data.due_date,
+            sort_order=max_order + 1,
+            created_by=current_user.id if current_user else None,
+        )
+        
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        
+        # Reload template relationship for response
+        db.refresh(task)
+        if task.template_id:
+            task.template = template
+        
+        sales_view_logger.info(
+            action="create_task_from_template",
+            message=f"Tarefa criada a partir de template: {template.code}",
+            lead_id=lead_id,
+            task_id=task.id,
+            template_id=template.id,
+            is_next_action=data.is_next_action,
+            actor_id=current_user.id if current_user else None,
+        )
+        
+        return _map_lead_task(task)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except ProgrammingError as pg_exc:
+        # Handle database programming errors (e.g., constraint violations)
+        db.rollback()
+        sales_view_logger.error(
+            action="create_task_from_template_db_error",
+            message=f"Erro de banco ao criar tarefa para lead {lead_id}",
+            lead_id=lead_id,
+            template_id=data.template_id,
+            error=str(pg_exc),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Erro ao criar tarefa. Verifique se os dados estão corretos."
+        )
+    except Exception as exc:
+        # Handle unexpected errors
+        db.rollback()
+        sales_view_logger.error(
+            action="create_task_from_template_error",
+            message=f"Erro inesperado ao criar tarefa para lead {lead_id}",
+            lead_id=lead_id,
+            template_id=data.template_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao criar tarefa: {str(exc)}"
+        )
 
 
 @router.patch("/{lead_id}/tasks/{task_id}", response_model=LeadTaskResponse)
