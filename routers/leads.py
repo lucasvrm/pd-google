@@ -1368,6 +1368,7 @@ def create_task_from_template(
         ).scalar() or 0
         
         # Create task
+        # Note: created_by is set automatically by Supabase trigger (set_created_by_on_lead_tasks)
         task = models.LeadTask(
             id=str(uuid.uuid4()),
             lead_id=lead_id,
@@ -1378,7 +1379,6 @@ def create_task_from_template(
             status="pending",
             due_date=data.due_date,
             sort_order=max_order + 1,
-            created_by=current_user.id if current_user else None,
         )
         
         db.add(task)
