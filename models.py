@@ -272,7 +272,9 @@ class LeadTask(Base):
     due_date = Column(DateTime(timezone=True), nullable=True)
     sort_order = Column(Integer, default=0)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    completed_by = Column(String, ForeignKey("profiles.id"), nullable=True)
+    # completed_by: FK removed from SQLAlchemy - Supabase manages profiles FK
+    # Column exists in database with FK, but SQLAlchemy doesn't need to know
+    completed_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # created_by: FK removed from SQLAlchemy - Supabase manages via auth.
     # Column exists in database, but SQLAlchemy doesn't need to know about FK with profiles.
