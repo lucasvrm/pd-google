@@ -90,6 +90,21 @@ def get_db():
         db.close()
 
 
+def _ensure_str(value: Any) -> Optional[str]:
+    """
+    Garante que value é string, convertendo UUID se necessário.
+    
+    Args:
+        value: Pode ser UUID, str, ou None
+    
+    Returns:
+        String convertida ou None
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
 def _normalize_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
@@ -1082,9 +1097,9 @@ def qualify_lead(
         qualify_lead_logger.info(
             action="lead_qualified",
             message=f"Lead {lead_id} qualified and linked to deal {request.deal_id}",
-            lead_id=lead_id,
-            deal_id=request.deal_id,
-            actor_id=actor_id,
+            lead_id=_ensure_str(lead_id),
+            deal_id=_ensure_str(request.deal_id),
+            actor_id=_ensure_str(actor_id),
             migrated_fields=migrated_fields.model_dump(),
         )
         
@@ -1104,8 +1119,8 @@ def qualify_lead(
         qualify_lead_logger.error(
             action="lead_qualification_error",
             message=f"Failed to qualify lead {lead_id}",
-            lead_id=lead_id,
-            deal_id=request.deal_id,
+            lead_id=_ensure_str(lead_id),
+            deal_id=_ensure_str(request.deal_id),
             error=str(exc),
             exc_info=True,
         )
@@ -1157,10 +1172,10 @@ def update_lead_priority(
     sales_view_logger.info(
         action="update_lead_priority",
         message=f"Prioridade atualizada: {lead_id} → {data.priority_bucket}",
-        lead_id=lead_id,
+        lead_id=_ensure_str(lead_id),
         priority_bucket=data.priority_bucket,
         priority_score=score,
-        actor_id=current_user.id if current_user else None,
+        actor_id=_ensure_str(current_user.id if current_user else None),
     )
     
     return UpdateLeadPriorityResponse(
@@ -1294,10 +1309,10 @@ def create_lead_task(
         sales_view_logger.info(
             action="create_lead_task",
             message=f"Tarefa customizada criada para lead {lead_id}",
-            lead_id=lead_id,
-            task_id=task.id,
+            lead_id=_ensure_str(lead_id),
+            task_id=_ensure_str(task.id),
             is_next_action=data.is_next_action,
-            actor_id=current_user.id if current_user else None,
+            actor_id=_ensure_str(current_user.id if current_user else None),
         )
         
         return _map_lead_task(task)
@@ -1311,7 +1326,7 @@ def create_lead_task(
         sales_view_logger.error(
             action="create_lead_task_db_error",
             message=f"Erro de banco ao criar tarefa para lead {lead_id}",
-            lead_id=lead_id,
+            lead_id=_ensure_str(lead_id),
             error=str(pg_exc),
         )
         raise HTTPException(
@@ -1324,7 +1339,7 @@ def create_lead_task(
         sales_view_logger.error(
             action="create_lead_task_error",
             message=f"Erro inesperado ao criar tarefa para lead {lead_id}",
-            lead_id=lead_id,
+            lead_id=_ensure_str(lead_id),
             error=str(exc),
             exc_info=True,
         )
@@ -1393,11 +1408,11 @@ def create_task_from_template(
         sales_view_logger.info(
             action="create_task_from_template",
             message=f"Tarefa criada a partir de template: {template.code}",
-            lead_id=lead_id,
-            task_id=task.id,
-            template_id=template.id,
+            lead_id=_ensure_str(lead_id),
+            task_id=_ensure_str(task.id),
+            template_id=_ensure_str(template.id),
             is_next_action=data.is_next_action,
-            actor_id=current_user.id if current_user else None,
+            actor_id=_ensure_str(current_user.id if current_user else None),
         )
         
         return _map_lead_task(task)
@@ -1411,8 +1426,8 @@ def create_task_from_template(
         sales_view_logger.error(
             action="create_task_from_template_db_error",
             message=f"Erro de banco ao criar tarefa para lead {lead_id}",
-            lead_id=lead_id,
-            template_id=data.template_id,
+            lead_id=_ensure_str(lead_id),
+            template_id=_ensure_str(data.template_id),
             error=str(pg_exc),
         )
         raise HTTPException(
@@ -1425,8 +1440,8 @@ def create_task_from_template(
         sales_view_logger.error(
             action="create_task_from_template_error",
             message=f"Erro inesperado ao criar tarefa para lead {lead_id}",
-            lead_id=lead_id,
-            template_id=data.template_id,
+            lead_id=_ensure_str(lead_id),
+            template_id=_ensure_str(data.template_id),
             error=str(exc),
             exc_info=True,
         )
