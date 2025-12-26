@@ -149,6 +149,7 @@ class LeadStatus(Base):
     description text,
     is_active   boolean NOT NULL DEFAULT true,
     sort_order  integer NOT NULL DEFAULT 0,
+    priority_weight integer DEFAULT 12,
     created_at  timestamptz NOT NULL DEFAULT now()
     """
     __tablename__ = "lead_statuses"
@@ -159,6 +160,7 @@ class LeadStatus(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     sort_order = Column(Integer, default=0)
+    priority_weight = Column(Integer, default=12, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -172,6 +174,7 @@ class LeadOrigin(Base):
     description text,
     is_active   boolean NOT NULL DEFAULT true,
     sort_order  integer NOT NULL DEFAULT 0,
+    priority_weight integer DEFAULT 10,
     created_at  timestamptz NOT NULL DEFAULT now()
     """
     __tablename__ = "lead_origins"
@@ -182,6 +185,7 @@ class LeadOrigin(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     sort_order = Column(Integer, default=0)
+    priority_weight = Column(Integer, default=10, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
