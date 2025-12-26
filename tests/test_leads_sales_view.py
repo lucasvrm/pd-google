@@ -44,6 +44,12 @@ def setup_module(module):
     status_qualified = models.LeadStatus(id="qualified", code="qualified", label="Qualificado", sort_order=3)
     status_lost = models.LeadStatus(id="lost", code="lost", label="Perdido", sort_order=4)
 
+    # Create LeadOrigin entries
+    origin_inbound = models.LeadOrigin(id="inbound", code="inbound", label="Inbound", sort_order=1)
+    origin_outbound = models.LeadOrigin(id="outbound", code="outbound", label="Outbound", sort_order=2)
+    origin_partner = models.LeadOrigin(id="partner", code="partner", label="Partner", sort_order=3)
+    origin_event = models.LeadOrigin(id="event", code="event", label="Event", sort_order=4)
+
     # Lead 1: High engagement without company -> qualify_to_company (rank 5)
     # NOTE: last_interaction_at is set on both Lead and LeadActivityStats to test
     # the coalesce() fallback behavior in the query. Stats is the source of truth.
@@ -135,6 +141,10 @@ def setup_module(module):
             status_contacted,
             status_qualified,
             status_lost,
+            origin_inbound,
+            origin_outbound,
+            origin_partner,
+            origin_event,
             lead_hot,
             lead_cold,
             lead_recent,

@@ -35,6 +35,7 @@ from services.lead_priority_service import (
     calculate_lead_priority,
     classify_priority_bucket,
 )
+from services.lead_priority_config_service import get_lead_priority_config
 from services.next_action_service import (
     CALL_AGAIN_WINDOW_DAYS,
     COLD_LEAD_DAYS,
@@ -77,9 +78,6 @@ sales_view_items_histogram = Histogram(
     "Number of items returned by /api/leads/sales-view",
     buckets=(0, 1, 5, 10, 20, 50, 100, 200, 500),
 )
-
-PRIORITY_HOT_THRESHOLD = 70
-PRIORITY_WARM_THRESHOLD = 40
 
 
 def get_db():
@@ -399,6 +397,13 @@ def sales_view(
     task_next_action_enabled = is_task_next_action_enabled(db)
     # ========== FIM NOVO ==========
 
+    # ========== NOVO: Carregar config de prioridade ==========
+    priority_config = get_lead_priority_config(db)
+    thresholds = priority_config.get("thresholds", {"hot": 70, "warm": 40})
+    hot_threshold = thresholds.get("hot", 70)
+    warm_threshold = thresholds.get("warm", 40)
+    # ========== FIM NOVO ==========
+
     try:
         try:
             base_query = (
@@ -474,19 +479,19 @@ def sales_view(
                     bucket_normalized = bucket.lower()
                     if bucket_normalized == "hot":
                         bucket_conditions.append(
-                            models.Lead.priority_score >= PRIORITY_HOT_THRESHOLD
+                            models.Lead.priority_score >= hot_threshold
                         )
                     elif bucket_normalized == "warm":
                         bucket_conditions.append(
                             and_(
-                                models.Lead.priority_score >= PRIORITY_WARM_THRESHOLD,
-                                models.Lead.priority_score < PRIORITY_HOT_THRESHOLD,
+                                models.Lead.priority_score >= warm_threshold,
+                                models.Lead.priority_score < hot_threshold,
                             )
                         )
                     elif bucket_normalized == "cold":
                         bucket_conditions.append(
                             or_(
-                                models.Lead.priority_score < PRIORITY_WARM_THRESHOLD,
+                                models.Lead.priority_score < warm_threshold,
                                 models.Lead.priority_score.is_(None),
                             )
                         )
@@ -804,13 +809,13 @@ def sales_view(
                 
                 if auto_priority_enabled:
                     # Sistema antigo: calcular se não existe no banco
-                    score = db_score if db_score is not None else calculate_lead_priority(lead, stats)
+                    score = db_score if db_score is not None else calculate_lead_priority(lead, stats, config=priority_config)
                 else:
                     # Sistema novo: usar apenas valor do banco (prioridade manual)
                     # Se não existe, default para 0 (cold)
                     score = db_score if db_score is not None else 0
                 
-                bucket = classify_priority_bucket(score)
+                bucket = classify_priority_bucket(score, config=priority_config)
                 # ========== FIM MODIFICADO ==========
 
                 last_interaction = (
