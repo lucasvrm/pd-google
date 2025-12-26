@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, event, inspect, JSON
 from sqlalchemy.sql import func
