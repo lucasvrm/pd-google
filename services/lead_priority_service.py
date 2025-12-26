@@ -3,6 +3,10 @@ from typing import Dict, Any, Optional
 
 from models import Lead
 
+# Default thresholds (kept for backward compatibility)
+PRIORITY_HOT_THRESHOLD = 70
+PRIORITY_WARM_THRESHOLD = 40
+
 
 def _clamp(value: float, minimum: float = 0, maximum: float = 100) -> float:
     return max(minimum, min(maximum, value))

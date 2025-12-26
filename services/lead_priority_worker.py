@@ -35,6 +35,10 @@ class LeadPriorityWorker:
                     message="Cálculo automático de prioridade desabilitado (feature_lead_auto_priority=false)",
                 )
                 return
+            
+            # ========== NOVO: Carregar config uma vez ==========
+            priority_config = get_lead_priority_config(db_check)
+            # ========== FIM NOVO ==========
         finally:
             db_check.close()
         # ========== FIM NOVO ==========
@@ -58,11 +62,15 @@ class LeadPriorityWorker:
                 )
                 .all()
             )
+            # ========== FIM MODIFICADO ==========
 
             for lead in leads:
                 try:
                     score = calculate_lead_priority(lead, config=config)
                     lead.priority_score = score
+                    # Optionally store bucket if there's a column for it:
+                    # lead.priority_bucket = bucket
+                    # ========== FIM MODIFICADO ==========
                     processed += 1
                 except Exception as exc:  # pragma: no cover - worker error path
                     errors += 1

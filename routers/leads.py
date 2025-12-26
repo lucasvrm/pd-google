@@ -79,9 +79,6 @@ sales_view_items_histogram = Histogram(
     buckets=(0, 1, 5, 10, 20, 50, 100, 200, 500),
 )
 
-PRIORITY_HOT_THRESHOLD = 70
-PRIORITY_WARM_THRESHOLD = 40
-
 
 def get_db():
     db = SessionLocal()
@@ -399,10 +396,12 @@ def sales_view(
     auto_next_action_enabled = is_auto_next_action_enabled(db)
     task_next_action_enabled = is_task_next_action_enabled(db)
     # ========== FIM NOVO ==========
-    
-    # ========== NOVO: Ler configuração de prioridade uma vez ==========
+
+    # ========== NOVO: Carregar config de prioridade ==========
     priority_config = get_lead_priority_config(db)
-    # ========== FIM NOVO ==========
+    thresholds = priority_config.get("thresholds", {"hot": 70, "warm": 40})
+    hot_threshold = thresholds.get("hot", 70)
+    warm_threshold = thresholds.get("warm", 40)
     # ========== FIM NOVO ==========
 
     try:
@@ -819,7 +818,7 @@ def sales_view(
                     # Se não existe, default para 0 (cold)
                     score = db_score if db_score is not None else 0
                 
-                bucket = classify_priority_bucket(score, priority_config)
+                bucket = classify_priority_bucket(score, config=priority_config)
                 # ========== FIM MODIFICADO ==========
 
                 last_interaction = (

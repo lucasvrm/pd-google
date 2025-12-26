@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, event, inspect, JSON
 from sqlalchemy.sql import func
@@ -149,6 +150,7 @@ class LeadStatus(Base):
     description text,
     is_active   boolean NOT NULL DEFAULT true,
     sort_order  integer NOT NULL DEFAULT 0,
+    priority_weight integer DEFAULT 12,
     created_at  timestamptz NOT NULL DEFAULT now()
     priority_weight integer NOT NULL DEFAULT 0
     """
@@ -174,6 +176,7 @@ class LeadOrigin(Base):
     description text,
     is_active   boolean NOT NULL DEFAULT true,
     sort_order  integer NOT NULL DEFAULT 0,
+    priority_weight integer DEFAULT 10,
     created_at  timestamptz NOT NULL DEFAULT now()
     priority_weight integer NOT NULL DEFAULT 0
     """
@@ -230,6 +233,20 @@ class Lead(Base):
     @property
     def legal_name(self):
         return self.title
+
+    @property
+    def status(self) -> Optional[str]:
+        """Get status code from lead_status relationship."""
+        if self.lead_status:
+            return self.lead_status.code
+        return None
+
+    @property
+    def origin(self) -> Optional[str]:
+        """Get origin code from lead_origin relationship."""
+        if self.lead_origin:
+            return self.lead_origin.code
+        return None
 
 
 class Tag(Base):
@@ -486,3 +503,17 @@ def update_lead_interaction_on_change(mapper, connection, target):
         # Lead.activity_stats is a one-to-one relationship for engagement snapshots.
         stats_state = inspect(stats)
         _touch_last_interaction(stats_state, stats, now)
+
+
+class SystemSettings(Base):
+    """
+    System-wide configuration stored in database.
+    Supports flexible JSON config for features like lead priority calculation.
+    """
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True, index=True)
+    value = Column(JSON, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
