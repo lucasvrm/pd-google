@@ -7,6 +7,7 @@ from sqlalchemy.orm import joinedload
 import models
 from database import SessionLocal
 from services.lead_priority_service import calculate_lead_priority
+from services.lead_priority_config_service import get_lead_priority_config
 from services.feature_flags_service import is_auto_priority_enabled
 from utils.structured_logging import StructuredLogger
 
@@ -45,16 +46,22 @@ class LeadPriorityWorker:
 
         db = self.session_factory()
         try:
+            # Fetch priority configuration once for all leads
+            config = get_lead_priority_config(db=db)
+            
             leads = (
                 db.query(models.Lead)
-                .options(joinedload(models.Lead.activity_stats))
+                .options(
+                    joinedload(models.Lead.activity_stats),
+                    joinedload(models.Lead.lead_status),
+                    joinedload(models.Lead.lead_origin),
+                )
                 .all()
             )
 
             for lead in leads:
                 try:
-                    stats: Optional[models.LeadActivityStats] = lead.activity_stats
-                    score = calculate_lead_priority(lead, stats)
+                    score = calculate_lead_priority(lead, config=config)
                     lead.priority_score = score
                     processed += 1
                 except Exception as exc:  # pragma: no cover - worker error path
