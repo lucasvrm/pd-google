@@ -1,126 +1,194 @@
 """
-Lead Priority Configuration Service
+Lead Priority Config Service
 
-Provides centralized access to lead priority calculation config from database.
-Config includes weights for status/origin/recency/engagement and thresholds for hot/warm/cold buckets.
+Reads lead priority configuration from system_settings table in Supabase.
+Cache in memory with TTL to reduce queries.
+Pattern mirrored from feature_flags_service.py.
 """
 
-from typing import Dict, Any, Optional
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from functools import lru_cache
 
-import models
+from database import SessionLocal
+from utils.structured_logging import StructuredLogger
 
 
-# Default config matching current hardcoded behavior
+logger = logging.getLogger("pipedesk_drive.lead_priority_config")
+config_logger = StructuredLogger(
+    service="lead_priority_config", logger_name="pipedesk_drive.lead_priority_config"
+)
+
+
+# Cache em memória
+CACHE_TTL_SECONDS = 60
+_cache: Optional[Dict[str, Any]] = None
+_cache_timestamp: Optional[datetime] = None
+
+
+# Default configuration values
 DEFAULT_CONFIG = {
-    "weights": {
-        "status": {
-            "new": 18,
-            "contacted": 22,
-            "qualified": 26,
-            "proposal": 28,
-            "won": 30,
-            "lost": 5,
-        },
-        "origin": {
-            "inbound": 20,
-            "referral": 18,
-            "partner": 16,
-            "event": 15,
-            "outbound": 12,
-        },
-        "recency_max": 30.0,
-        "recency_decay_rate": 0.5,
-        "engagement_multiplier": 0.2,
-    },
     "thresholds": {
         "hot": 70,
         "warm": 40,
+    },
+    "scoring": {
+        "recencyMaxPoints": 40,
+        "staleDays": 30,
+        "upcomingMeetingPoints": 25,
+        "minScore": 0,
+        "maxScore": 100,
+    },
+    "descriptions": {
+        "hot": "High priority - needs immediate attention",
+        "warm": "Medium priority - follow up soon",
+        "cold": "Low priority - monitor",
     }
 }
 
 
-def _get_config_from_db(db: Session) -> Optional[Dict[str, Any]]:
-    """
-    Fetch lead_priority_config from system_settings table.
-    
-    Returns:
-        Config dict or None if not found
-    """
-    try:
-        setting = db.query(models.SystemSettings).filter(
-            models.SystemSettings.key == "lead_priority_config"
-        ).first()
-        
-        if setting and setting.value:
-            return setting.value
-        
-        return None
-    except Exception:
-        # If table doesn't exist or query fails, return None
-        return None
+def _is_cache_valid() -> bool:
+    """Verifica se o cache ainda é válido."""
+    if _cache_timestamp is None:
+        return False
+    now = datetime.now(timezone.utc)
+    return (now - _cache_timestamp) < timedelta(seconds=CACHE_TTL_SECONDS)
 
 
-def get_lead_priority_config(db: Session) -> Dict[str, Any]:
+def _sanitize_config(raw_value: Any) -> Dict[str, Any]:
     """
-    Get lead priority config with caching.
-    
-    Fetches from database or returns default config if not found.
-    Uses in-memory cache to avoid repeated DB queries in the same process.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        Config dict with weights and thresholds
+    Sanitiza e normaliza a configuração do banco.
+    Garante presença de todas as chaves e tipos numéricos corretos.
+    Em caso de dados inválidos, usa defaults.
     """
-    config = _get_config_from_db(db)
-    
-    if config is None:
+    if not isinstance(raw_value, dict):
+        config_logger.warning(
+            action="config_sanitize",
+            message="Config value is not a dict, using defaults",
+            raw_value=raw_value,
+        )
         return DEFAULT_CONFIG.copy()
     
-    # Merge with defaults to ensure all required keys exist
-    merged = DEFAULT_CONFIG.copy()
-    merged.update(config)
+    # Start with defaults and overlay valid values from DB
+    config = DEFAULT_CONFIG.copy()
     
-    # Ensure nested dicts are merged
-    if "weights" in config:
-        merged["weights"] = {**DEFAULT_CONFIG["weights"], **config["weights"]}
-        if "status" in config["weights"]:
-            merged["weights"]["status"] = {**DEFAULT_CONFIG["weights"]["status"], **config["weights"]["status"]}
-        if "origin" in config["weights"]:
-            merged["weights"]["origin"] = {**DEFAULT_CONFIG["weights"]["origin"], **config["weights"]["origin"]}
+    try:
+        # Sanitize thresholds
+        if "thresholds" in raw_value and isinstance(raw_value["thresholds"], dict):
+            thresholds = raw_value["thresholds"]
+            if "hot" in thresholds:
+                try:
+                    config["thresholds"]["hot"] = int(thresholds["hot"])
+                except (TypeError, ValueError):
+                    pass
+            if "warm" in thresholds:
+                try:
+                    config["thresholds"]["warm"] = int(thresholds["warm"])
+                except (TypeError, ValueError):
+                    pass
+        
+        # Sanitize scoring
+        if "scoring" in raw_value and isinstance(raw_value["scoring"], dict):
+            scoring = raw_value["scoring"]
+            for key in ["recencyMaxPoints", "staleDays", "upcomingMeetingPoints", "minScore", "maxScore"]:
+                if key in scoring:
+                    try:
+                        config["scoring"][key] = int(scoring[key])
+                    except (TypeError, ValueError):
+                        pass
+        
+        # Sanitize descriptions (strings, less strict)
+        if "descriptions" in raw_value and isinstance(raw_value["descriptions"], dict):
+            desc = raw_value["descriptions"]
+            for key in ["hot", "warm", "cold"]:
+                if key in desc and isinstance(desc[key], str):
+                    config["descriptions"][key] = desc[key]
+        
+    except Exception as exc:
+        config_logger.error(
+            action="config_sanitize_error",
+            message="Error sanitizing config, using defaults",
+            error=exc,
+        )
+        return DEFAULT_CONFIG.copy()
     
-    if "thresholds" in config:
-        merged["thresholds"] = {**DEFAULT_CONFIG["thresholds"], **config["thresholds"]}
-    
-    return merged
+    return config
 
 
-def get_thresholds(db: Session) -> Dict[str, int]:
+def _refresh_cache(db: Session) -> None:
+    """Atualiza o cache de configuração do banco."""
+    global _cache, _cache_timestamp
+    
+    try:
+        result = db.execute(
+            text("SELECT value FROM system_settings WHERE key = :key"),
+            {"key": "lead_priority_config"}
+        )
+        row = result.fetchone()
+        
+        if row:
+            raw_value = row[0]
+            _cache = _sanitize_config(raw_value)
+            config_logger.debug(
+                action="cache_refresh",
+                status="success",
+                message="Lead priority config cache updated from DB",
+                config=_cache,
+            )
+        else:
+            # No config in DB, use defaults
+            _cache = DEFAULT_CONFIG.copy()
+            config_logger.info(
+                action="cache_refresh",
+                status="default",
+                message="No lead_priority_config in DB, using defaults",
+            )
+        
+        _cache_timestamp = datetime.now(timezone.utc)
+        
+    except Exception as exc:
+        config_logger.error(
+            action="cache_refresh_error",
+            message="Failed to refresh lead priority config cache",
+            error=exc,
+        )
+        # Use defaults on error
+        if _cache is None:
+            _cache = DEFAULT_CONFIG.copy()
+            _cache_timestamp = datetime.now(timezone.utc)
+
+
+def get_lead_priority_config(db: Optional[Session] = None) -> Dict[str, Any]:
     """
-    Get just the threshold values (hot/warm) from config.
+    Obtém configuração de prioridade de leads.
     
     Args:
-        db: Database session
-        
-    Returns:
-        Dict with 'hot' and 'warm' threshold values
-    """
-    config = get_lead_priority_config(db)
-    return config["thresholds"]
-
-
-def get_weights(db: Session) -> Dict[str, Any]:
-    """
-    Get just the weight values from config.
+        db: Sessão do banco (opcional, cria nova se não fornecida)
     
-    Args:
-        db: Database session
-        
     Returns:
-        Dict with status, origin, recency, and engagement weights
+        Dict com configuração de prioridade (thresholds, scoring, descriptions)
     """
-    config = get_lead_priority_config(db)
-    return config["weights"]
+    global _cache, _cache_timestamp
+    
+    if not _is_cache_valid():
+        if db is not None:
+            _refresh_cache(db)
+        else:
+            session = SessionLocal()
+            try:
+                _refresh_cache(session)
+            finally:
+                session.close()
+    
+    # Should always have cache after refresh (either from DB or defaults)
+    return _cache.copy() if _cache else DEFAULT_CONFIG.copy()
+
+
+def clear_cache() -> None:
+    """Limpa o cache (útil para testes)."""
+    global _cache, _cache_timestamp
+    _cache = None
+    _cache_timestamp = None

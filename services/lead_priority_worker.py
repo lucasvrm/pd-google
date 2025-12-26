@@ -6,7 +6,7 @@ from sqlalchemy.orm import joinedload
 
 import models
 from database import SessionLocal
-from services.lead_priority_service import calculate_lead_priority, classify_priority_bucket
+from services.lead_priority_service import calculate_lead_priority
 from services.lead_priority_config_service import get_lead_priority_config
 from services.feature_flags_service import is_auto_priority_enabled
 from utils.structured_logging import StructuredLogger
@@ -50,7 +50,9 @@ class LeadPriorityWorker:
 
         db = self.session_factory()
         try:
-            # ========== MODIFICADO: Eager-load lead_status e lead_origin ==========
+            # Fetch priority configuration once for all leads
+            config = get_lead_priority_config(db=db)
+            
             leads = (
                 db.query(models.Lead)
                 .options(
@@ -64,10 +66,7 @@ class LeadPriorityWorker:
 
             for lead in leads:
                 try:
-                    stats: Optional[models.LeadActivityStats] = lead.activity_stats
-                    # ========== MODIFICADO: Passar config e calcular bucket ==========
-                    score = calculate_lead_priority(lead, stats, config=priority_config)
-                    bucket = classify_priority_bucket(score, config=priority_config)
+                    score = calculate_lead_priority(lead, config=config)
                     lead.priority_score = score
                     # Optionally store bucket if there's a column for it:
                     # lead.priority_bucket = bucket

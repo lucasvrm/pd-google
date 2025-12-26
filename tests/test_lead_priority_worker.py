@@ -45,10 +45,26 @@ def setup_module(module):
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     now = datetime.now(timezone.utc)
+    
+    # Create status and origin with priority weights
+    status = models.LeadStatus(
+        id="status-test-1",
+        code="new",
+        label="New",
+        priority_weight=18
+    )
+    origin = models.LeadOrigin(
+        id="origin-test-1",
+        code="inbound",
+        label="Inbound",
+        priority_weight=20
+    )
 
     lead = models.Lead(
         id="priority-worker-1",
         title="Priority Lead",
+        lead_status_id=status.id,
+        lead_origin_id=origin.id,
         created_at=now - timedelta(days=10),
         updated_at=now - timedelta(days=5),
     )
@@ -58,7 +74,7 @@ def setup_module(module):
         last_interaction_at=now - timedelta(days=2),
     )
 
-    db.add_all([lead, stats])
+    db.add_all([status, origin, lead, stats])
     db.commit()
     db.close()
 
@@ -76,6 +92,10 @@ def test_priority_worker_refreshes_scores_and_logs(monkeypatch):
     
     # Mock feature flag to enable auto priority
     monkeypatch.setattr(lead_priority_worker, "is_auto_priority_enabled", lambda *_, **__: True)
+    
+    # Mock config service to return default config
+    from services.lead_priority_config_service import DEFAULT_CONFIG
+    monkeypatch.setattr(lead_priority_worker, "get_lead_priority_config", lambda *_, **__: DEFAULT_CONFIG)
 
     worker = lead_priority_worker.LeadPriorityWorker(session_factory=override_session_factory)
     worker.run()

@@ -474,6 +474,9 @@ def sales_view(
 
             # Apply priority filter - support list (for priority_bucket)
             if priority_filter:
+                hot_threshold = priority_config.get("thresholds", {}).get("hot", 70)
+                warm_threshold = priority_config.get("thresholds", {}).get("warm", 40)
+                
                 bucket_conditions = []
                 for bucket in priority_filter:
                     bucket_normalized = bucket.lower()
@@ -809,7 +812,7 @@ def sales_view(
                 
                 if auto_priority_enabled:
                     # Sistema antigo: calcular se não existe no banco
-                    score = db_score if db_score is not None else calculate_lead_priority(lead, stats, config=priority_config)
+                    score = db_score if db_score is not None else calculate_lead_priority(lead, config=priority_config)
                 else:
                     # Sistema novo: usar apenas valor do banco (prioridade manual)
                     # Se não existe, default para 0 (cold)
